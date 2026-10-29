@@ -1,0 +1,121 @@
+html, body, #map {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.leaflet-popup-content {
+  margin: 12px 14px;
+  min-width: 200px;
+  font-size: 14px;
+}
+
+.popup h3 {
+  margin: 0 0 2px;
+  font-size: 16px;
+}
+
+.popup .sub {
+  color: #666;
+  margin-bottom: 8px;
+}
+
+.popup h4 {
+  margin: 10px 0 4px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #555;
+}
+
+.popup ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.popup li button {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 0;
+  border: 0;
+  border-top: 1px solid #eee;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.popup .dist {
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.dist.near { color: #2b8a3e; }
+.dist.mid { color: #e67700; }
+.dist.far { color: #c92a2a; }
+
+.badge {
+  display: inline-block;
+  min-width: 18px;
+  margin: 0 3px 3px 0;
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 6px;
+  border-radius: 50%;
+}
+
+.popup .app-link {
+  display: block;
+  margin-top: 10px;
+  font-weight: 600;
+}
+
+.locate-btn {
+  width: 44px;
+  height: 44px;
+  border: 2px solid rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+  background: #fff;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.layer-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.chip[aria-pressed="false"] {
+  opacity: 0.45;
+}
