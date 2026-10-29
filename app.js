@@ -1,4 +1,4 @@
-// Map of ZET/HŽ stops and Bajs bike stations. Static data only, built by tools/build_data.py.
+// Map of ZET/HŽ stops and Bajs bike stations. Station data is static, built by tools/build_data.py.
 
 const ZAGREB_CENTER = [45.8131, 15.9772];
 const NEARBY_BAJS = 3;
@@ -9,16 +9,32 @@ const MID_METERS = 500;
 const COLORS = { tram: '#1c62c4', bus: '#2f9e44', train: '#7048e8', bajs: '#f76707', me: '#e03131' };
 const KIND_LABEL = { tram: 'Tram stop', bus: 'Bus stop', train: 'Train station', bajs: 'Bajs station' };
 
+const OSM_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+const OFM_ATTRIBUTION = `<a href="https://openfreemap.org">OpenFreeMap</a> &copy; <a href="https://www.openmaptiles.org/">OpenMapTiles</a> ${OSM_ATTRIBUTION}`;
+const BASEMAPS = {
+  clean: { label: 'Clean', style: 'https://tiles.openfreemap.org/styles/liberty' },
+  light: { label: 'Light', style: 'https://tiles.openfreemap.org/styles/positron' },
+  detailed: { label: 'Detailed', tiles: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png' },
+};
+// Shop/restaurant icons, one-way arrows and road shields clutter the map at city zoom.
+const CLUTTER_LAYERS = /^(poi_|road_one_way_arrow|highway-shield|road_shield)/;
+
+const ICONS = {
+  layers: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3 2 8.5 12 14l10-5.5z"/><path d="m2 13.5 10 5.5 10-5.5"/></svg>',
+  locate: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="3" fill="currentColor"/><path d="M12 1.5v3M12 19.5v3M1.5 12h3M19.5 12h3"/></svg>',
+};
+
 let stops = [];
 let bajsStations = [];
 let places = []; // stops + Bajs stations, indexed by place.id for the clickable lists
 
-const map = L.map('map', { zoomControl: false }).setView(ZAGREB_CENTER, 14);
+// Filled in init(); hidden layers are remembered between visits.
+const layers = { bus: L.layerGroup(), tram: L.layerGroup(), train: L.layerGroup(), bajs: L.layerGroup() };
+const hiddenLayers = new Set(readSetting('hiddenLayers', []));
 
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 19,
-  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> | Data: ZET, HŽPP, Bajs | Routes: <a href="https://transitous.org/sources/">Transitous</a> | <a href="https://github.com/zkristo/bajsikl">bajsikl</a>',
-}).addTo(map);
+const map = L.map('map', { zoomControl: false, maxZoom: 19 }).setView(ZAGREB_CENTER, 14);
+map.attributionControl.setPrefix(false);
+map.attributionControl.addAttribution('Data: ZET, HŽPP, Bajs | Routes: <a href="https://transitous.org/sources/">Transitous</a> | <a href="https://github.com/zkristo/bajsikl">bajsikl</a>');
 
 // All stations share one canvas: stacked canvases would swallow each other's taps.
 // A larger tolerance makes the small dots easier to tap on a phone.
@@ -29,20 +45,123 @@ const stationsRenderer = L.canvas({ pane: 'stations', tolerance: 8 });
 map.createPane('me').style.zIndex = 420;
 map.getPane('me').style.pointerEvents = 'none';
 
-L.control.zoom({ position: 'bottomright' }).addTo(map);
+// Base map -------------------------------------------------------------------
+
+let basemap = null;
+let basemapRequest = 0;
+setBasemap(readSetting('basemap', 'clean'));
+
+async function setBasemap(key) {
+  const id = ++basemapRequest;
+  if (!BASEMAPS[key] || (BASEMAPS[key].style && !webglSupported())) key = 'detailed';
+  let layer;
+  try {
+    layer = await createBasemap(BASEMAPS[key]);
+  } catch {
+    key = 'detailed'; // the vector style could not be downloaded
+    layer = await createBasemap(BASEMAPS[key]);
+  }
+  if (id !== basemapRequest) return;
+  if (basemap) map.removeLayer(basemap);
+  basemap = layer.addTo(map);
+  saveSetting('basemap', key);
+  for (const button of document.querySelectorAll('[data-basemap]')) {
+    button.setAttribute('aria-pressed', String(button.dataset.basemap === key));
+  }
+}
+
+async function createBasemap({ style, tiles }) {
+  if (tiles) return L.tileLayer(tiles, { maxZoom: 19, attribution: OSM_ATTRIBUTION });
+  const response = await fetch(style);
+  if (!response.ok) throw new Error(`Map style: HTTP ${response.status}`);
+  const json = await response.json();
+  json.layers = json.layers.filter((layer) => !CLUTTER_LAYERS.test(layer.id));
+  return L.maplibreGL({ style: json, attributionControl: { customAttribution: OFM_ATTRIBUTION } });
+}
+
+function webglSupported() {
+  try {
+    const canvas = document.createElement('canvas');
+    return Boolean(canvas.getContext('webgl2') || canvas.getContext('webgl'));
+  } catch {
+    return false;
+  }
+}
+
+// Map buttons (bottom right) -------------------------------------------------
 
 const LocateControl = L.Control.extend({
   onAdd() {
-    const button = L.DomUtil.create('button', 'locate-btn');
+    const button = L.DomUtil.create('button', 'map-btn');
     button.type = 'button';
     button.title = 'Show my location';
-    button.textContent = '◎';
+    button.innerHTML = ICONS.locate;
     L.DomEvent.disableClickPropagation(button);
     L.DomEvent.on(button, 'click', () => map.locate({ setView: true, maxZoom: 16, enableHighAccuracy: true }));
     return button;
   },
 });
 new LocateControl({ position: 'bottomright' }).addTo(map);
+
+// Layers button with a pop-up panel: which stations to show and the map style.
+// (Leaflet's own layers control misfires on touch: the tap that expands it also
+// clicks the first checkbox underneath.)
+const LayersControl = L.Control.extend({
+  onAdd() {
+    const container = L.DomUtil.create('div', 'layers-control');
+    const chips = [['bajs', 'Bajs'], ['tram', 'Tram'], ['bus', 'Bus'], ['train', 'Train']]
+      .map(([kind, label]) => `<button type="button" class="chip" data-layer="${kind}" aria-pressed="${!hiddenLayers.has(kind)}">${legend(kind, label)}</button>`)
+      .join('');
+    const styles = Object.entries(BASEMAPS)
+      .map(([key, { label }]) => `<button type="button" class="chip" data-basemap="${key}" aria-pressed="false">${label}</button>`)
+      .join('');
+    container.innerHTML = `
+      <div class="layers-panel">
+        <h4>Show on map</h4>
+        <div class="chip-row">${chips}</div>
+        <h4>Map style</h4>
+        <div class="chip-row">${styles}</div>
+      </div>
+      <button type="button" class="map-btn" title="Map layers">${ICONS.layers}</button>`;
+    L.DomEvent.disableClickPropagation(container);
+    L.DomEvent.disableScrollPropagation(container);
+    container.querySelector('.map-btn').addEventListener('click', () => container.classList.toggle('open'));
+    for (const chip of container.querySelectorAll('[data-layer]')) {
+      chip.addEventListener('click', () => {
+        const visible = toggleLayer(chip.dataset.layer);
+        chip.setAttribute('aria-pressed', String(visible));
+      });
+    }
+    for (const button of container.querySelectorAll('[data-basemap]')) {
+      button.addEventListener('click', () => setBasemap(button.dataset.basemap));
+    }
+    // Any tap outside the panel closes it (map 'click' doesn't fire for taps on stations).
+    document.addEventListener('pointerdown', (e) => {
+      if (!container.contains(e.target)) container.classList.remove('open');
+    });
+    return container;
+  },
+});
+new LayersControl({ position: 'bottomright' }).addTo(map);
+
+function toggleLayer(kind) {
+  const visible = hiddenLayers.has(kind);
+  if (visible) {
+    hiddenLayers.delete(kind);
+    if (stops.length) {
+      layers[kind].addTo(map);
+      // A re-added layer is drawn last; keep Bajs stations on top.
+      layers.bajs.eachLayer((marker) => marker.bringToFront());
+    }
+  } else {
+    hiddenLayers.add(kind);
+    map.removeLayer(layers[kind]);
+  }
+  saveSetting('hiddenLayers', [...hiddenLayers]);
+  return visible;
+}
+
+// Stations -------------------------------------------------------------------
 
 Promise.all([loadJson('data/stops.json'), loadJson('data/bajs.json')])
   .then(([stopsData, bajsData]) => init(stopsData.items, bajsData.items))
@@ -63,19 +182,15 @@ function init(stopItems, bajsItems) {
     place.latlng = L.latLng(place.lat, place.lon);
   });
 
-  // Added in drawing order: buses at the bottom, Bajs stations on top.
-  const layers = { bus: L.layerGroup(), tram: L.layerGroup(), train: L.layerGroup(), bajs: L.layerGroup() };
-  for (const kind of ['bus', 'tram', 'train']) {
-    for (const stop of stops.filter((s) => s.kind === kind)) {
-      stop.marker = L.circleMarker(stop.latlng, {
-        renderer: stationsRenderer,
-        radius: kind === 'bus' ? 4 : 6,
-        color: '#fff',
-        weight: 1.5,
-        fillColor: COLORS[kind],
-        fillOpacity: 1,
-      }).bindPopup(() => stopPopup(stop)).addTo(layers[kind]);
-    }
+  for (const stop of stops) {
+    stop.marker = L.circleMarker(stop.latlng, {
+      renderer: stationsRenderer,
+      radius: stop.kind === 'bus' ? 4 : 6,
+      color: '#fff',
+      weight: 1.5,
+      fillColor: COLORS[stop.kind],
+      fillOpacity: 1,
+    }).bindPopup(() => stopPopup(stop)).addTo(layers[stop.kind]);
   }
   for (const station of bajsStations) {
     station.marker = L.circleMarker(station.latlng, {
@@ -88,37 +203,11 @@ function init(stopItems, bajsItems) {
     }).bindPopup(() => bajsPopup(station)).addTo(layers.bajs);
   }
 
-  Object.values(layers).forEach((layer) => layer.addTo(map));
-  new LayerChips({ position: 'topleft', layers }).addTo(map);
+  // Added in drawing order: buses at the bottom, Bajs stations on top.
+  for (const kind of ['bus', 'tram', 'train', 'bajs']) {
+    if (!hiddenLayers.has(kind)) layers[kind].addTo(map);
+  }
 }
-
-// Legend chips that toggle each layer. (Leaflet's own layers control misfires on touch:
-// the tap that expands it also clicks the first checkbox underneath.)
-const LayerChips = L.Control.extend({
-  onAdd() {
-    const { layers } = this.options;
-    const bar = L.DomUtil.create('div', 'layer-chips');
-    L.DomEvent.disableClickPropagation(bar);
-    for (const [kind, label] of [['bajs', 'Bajs'], ['tram', 'Tram'], ['bus', 'Bus'], ['train', 'Train']]) {
-      const chip = L.DomUtil.create('button', 'chip', bar);
-      chip.type = 'button';
-      chip.innerHTML = legend(kind, label);
-      chip.setAttribute('aria-pressed', 'true');
-      L.DomEvent.on(chip, 'click', () => {
-        const visible = map.hasLayer(layers[kind]);
-        if (visible) {
-          map.removeLayer(layers[kind]);
-        } else {
-          layers[kind].addTo(map);
-          // A re-added layer is drawn last; keep Bajs stations on top.
-          layers.bajs.eachLayer((marker) => marker.bringToFront());
-        }
-        chip.setAttribute('aria-pressed', String(!visible));
-      });
-    }
-    return bar;
-  },
-});
 
 // Popups ---------------------------------------------------------------------
 
@@ -246,6 +335,22 @@ function distanceClass(meters) {
   if (meters <= NEAR_METERS) return 'near';
   if (meters <= MID_METERS) return 'mid';
   return 'far';
+}
+
+function readSetting(key, fallback) {
+  try {
+    return JSON.parse(localStorage.getItem(key)) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function saveSetting(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Private browsing can block storage; settings just won't be remembered.
+  }
 }
 
 function esc(text) {

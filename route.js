@@ -9,6 +9,7 @@ const LEG_COLORS = { walk: '#868e96', bajs: COLORS.bajs, tram: COLORS.tram, bus:
 const LEG_ICONS = { walk: '🚶', bajs: '🚲', tram: '🚋', bus: '🚌', train: '🚆' };
 const LEG_LABELS = { tram: 'Tram', bus: 'Bus', train: 'Train' };
 const PLACE_TYPES = { STOP: 'Stop', ADDRESS: 'Address', PLACE: 'Place' };
+const SEARCH_ICON = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg>';
 
 const timeFormat = new Intl.DateTimeFormat('hr-HR', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Zagreb' });
 
@@ -20,6 +21,8 @@ let planCounter = 0;
 let suggestCounter = 0;
 let suggestions = [];
 let suggestField = null;
+let routeBounds = null;
+let sheetCollapsed = false;
 
 // The route is drawn above the stations but lets taps through to them.
 map.createPane('route').style.zIndex = 415;
@@ -28,11 +31,14 @@ const routeLayer = L.layerGroup().addTo(map);
 
 // From/To box ----------------------------------------------------------------
 
+// Hidden until the search button (or "Route here" in a popup) opens it.
 const RouteBox = L.Control.extend({
   onAdd() {
     const box = L.DomUtil.create('div', 'route-box');
+    box.hidden = true;
     box.innerHTML = `
       <label class="route-field"><span>From</span><input id="route-from" type="text" placeholder="My location" autocomplete="off" enterkeyhint="search"></label>
+      <button type="button" class="route-close" title="Close">×</button>
       <label class="route-field"><span>To</span><input id="route-to" type="text" placeholder="Where to?" autocomplete="off" enterkeyhint="search"></label>
       <button type="button" class="swap" title="Swap start and destination">⇅</button>
       <ul class="suggestions" hidden></ul>`;
@@ -41,7 +47,20 @@ const RouteBox = L.Control.extend({
     return box;
   },
 });
-new RouteBox({ position: 'topleft' }).addTo(map);
+const routeBox = new RouteBox({ position: 'topleft' }).addTo(map).getContainer();
+
+const SearchControl = L.Control.extend({
+  onAdd() {
+    const button = L.DomUtil.create('button', 'map-btn search-btn');
+    button.type = 'button';
+    button.title = 'Plan a route';
+    button.innerHTML = SEARCH_ICON;
+    L.DomEvent.disableClickPropagation(button);
+    L.DomEvent.on(button, 'click', () => openRouteBox({ focus: true }));
+    return button;
+  },
+});
+new SearchControl({ position: 'bottomright' }).addTo(map);
 
 const inputs = { from: document.getElementById('route-from'), to: document.getElementById('route-to') };
 const suggestionList = document.querySelector('.route-box .suggestions');
@@ -73,7 +92,27 @@ suggestionList.addEventListener('click', (e) => {
   if (button) chooseSuggestion(Number(button.dataset.suggestion));
 });
 
-document.querySelector('.route-box .swap').addEventListener('click', swapEndpoints);
+routeBox.querySelector('.swap').addEventListener('click', swapEndpoints);
+routeBox.querySelector('.route-close').addEventListener('click', closeRouting);
+
+function openRouteBox({ focus = false } = {}) {
+  routeBox.hidden = false;
+  map.getContainer().classList.add('routing');
+  if (focus) {
+    map.closePopup();
+    inputs.to.focus();
+  }
+}
+
+// Hide the box and the route; the next search starts from "my location" again.
+function closeRouting() {
+  clearRoute();
+  state.from = null;
+  inputs.from.value = '';
+  hideSuggestions();
+  routeBox.hidden = true;
+  map.getContainer().classList.remove('routing');
+}
 
 async function suggest(field, text) {
   const id = ++suggestCounter;
@@ -134,6 +173,7 @@ function areaName(result) {
 function setEndpoint(field, place) {
   state[field] = place;
   inputs[field].value = place.name;
+  openRouteBox();
   if (state.to) planRoute();
 }
 
@@ -187,7 +227,9 @@ async function planRoute() {
   itineraries = [];
   selected = 0;
   routeLayer.clearLayers();
+  routeBounds = null;
   fadeStations(false);
+  setSheetCollapsed(false);
   showSheet('<p class="muted">Finding routes…</p>');
   try {
     const from = state.from || await currentPosition();
@@ -247,26 +289,72 @@ function clearRoute() {
   state.to = null;
   inputs.to.value = '';
   routeLayer.clearLayers();
+  routeBounds = null;
   fadeStations(false);
+  setSheetCollapsed(false);
   sheet.hidden = true;
 }
 
 // Results sheet --------------------------------------------------------------
 
-function showSheet(body) {
+// `summary` (the chosen option) is only shown while the sheet is minimised.
+function showSheet(body, summary = '') {
   sheet.innerHTML = `
     <div class="sheet-head">
-      <b>To ${esc(state.to?.name || '')}</b>
-      <button type="button" class="sheet-close" aria-label="Close route">×</button>
+      <div class="sheet-grip"></div>
+      <div class="sheet-title">
+        <b>To ${esc(state.to?.name || '')}</b>
+        <button type="button" class="sheet-close" aria-label="Close route">×</button>
+      </div>
+      ${summary ? `<div class="sheet-summary">${summary}</div>` : ''}
     </div>
-    ${body}`;
+    <div class="sheet-body">${body}</div>`;
   sheet.hidden = false;
 }
 
 sheet.addEventListener('click', (e) => {
-  if (e.target.closest('.sheet-close')) return clearRoute();
+  if (e.target.closest('.sheet-close')) return closeRouting();
+  if (e.target.closest('.sheet-head')) return setSheetCollapsed(!sheetCollapsed);
   const option = e.target.closest('[data-option]');
   if (option) selectItinerary(Number(option.dataset.option));
+});
+
+function setSheetCollapsed(collapsed) {
+  sheetCollapsed = collapsed;
+  sheet.classList.toggle('collapsed', collapsed);
+  if (collapsed) sheet.scrollTop = 0;
+  fitRoute();
+}
+
+// Swipe the sheet down to minimise it (from its header, or anywhere once scrolled
+// to the top) and up to bring it back.
+let swipe = null;
+
+sheet.addEventListener('touchstart', (e) => {
+  swipe = {
+    startY: e.touches[0].clientY,
+    dy: 0,
+    canPull: sheet.scrollTop <= 0 || Boolean(e.target.closest('.sheet-head')),
+  };
+  sheet.style.transition = 'none';
+}, { passive: true });
+
+sheet.addEventListener('touchmove', (e) => {
+  if (!swipe) return;
+  swipe.dy = e.touches[0].clientY - swipe.startY;
+  if (!sheetCollapsed && swipe.canPull && swipe.dy > 0) {
+    e.preventDefault(); // pull the sheet instead of scrolling its content
+    sheet.style.transform = `translateY(${swipe.dy}px)`;
+  }
+}, { passive: false });
+
+sheet.addEventListener('touchend', () => {
+  if (!swipe) return;
+  sheet.style.transition = '';
+  sheet.style.transform = '';
+  if (!sheetCollapsed && swipe.canPull && swipe.dy > 60) setSheetCollapsed(true);
+  else if (sheetCollapsed && swipe.dy < -30) setSheetCollapsed(false);
+  swipe = null;
 });
 
 // Leaflet's bottom controls (locate, zoom) move up above the sheet.
@@ -276,25 +364,27 @@ new ResizeObserver(() => {
 
 function selectItinerary(index) {
   selected = index;
-  showSheet(`<ol class="options">${itineraries.map(optionHtml).join('')}</ol>`);
+  showSheet(`<ol class="options">${itineraries.map(optionHtml).join('')}</ol>`, optionSummary(itineraries[index]));
   sheet.querySelector('.option.selected')?.scrollIntoView({ block: 'nearest' });
   drawItinerary(itineraries[index]);
 }
 
 function optionHtml(it, index) {
   const isSelected = index === selected;
+  return `<li>
+    <button type="button" class="option${isSelected ? ' selected' : ''}" data-option="${index}">${optionSummary(it)}</button>
+    ${isSelected ? stepsHtml(it) : ''}
+  </li>`;
+}
+
+function optionSummary(it) {
   const chips = it.legs
     .filter((leg) => legKind(leg) !== 'walk' || leg.duration >= 180 || it.legs.length === 1)
     .map(legChip)
     .join('');
-  return `<li>
-    <button type="button" class="option${isSelected ? ' selected' : ''}" data-option="${index}">
-      <span class="option-times">${formatTime(it.startTime)} – ${formatTime(it.endTime)}</span>
-      <span class="option-duration">${formatDuration(it.duration)}</span>
-      <span class="option-legs">${chips}</span>
-    </button>
-    ${isSelected ? stepsHtml(it) : ''}
-  </li>`;
+  return `<span class="option-times">${formatTime(it.startTime)} – ${formatTime(it.endTime)}</span>
+    <span class="option-duration">${formatDuration(it.duration)}</span>
+    <span class="option-legs">${chips}</span>`;
 }
 
 function legChip(leg) {
@@ -387,9 +477,15 @@ function drawItinerary(it) {
   const last = it.legs[it.legs.length - 1].to;
   L.circleMarker([first.lat, first.lon], { pane: 'route', interactive: false, radius: 7, color: '#212529', weight: 3, fillColor: '#fff', fillOpacity: 1 }).addTo(routeLayer);
   L.circleMarker([last.lat, last.lon], { pane: 'route', interactive: false, radius: 7, color: '#fff', weight: 3, fillColor: '#212529', fillOpacity: 1 }).addTo(routeLayer);
+  routeBounds = bounds;
+  fitRoute();
+}
 
-  const top = map.getContainer().querySelector('.leaflet-top.leaflet-left').offsetHeight;
-  map.fitBounds(bounds, { paddingTopLeft: [20, top + 10], paddingBottomRight: [20, sheet.offsetHeight + 20] });
+// Fit the route into the map area left visible by the From/To box and the sheet.
+function fitRoute() {
+  if (!routeBounds) return;
+  const top = routeBox.hidden ? 0 : routeBox.offsetHeight + 10;
+  map.fitBounds(routeBounds, { paddingTopLeft: [20, top + 20], paddingBottomRight: [70, sheet.offsetHeight + 20] });
 }
 
 // Station dots stay tappable but fade so the route stands out.
