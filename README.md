@@ -5,7 +5,15 @@
 Mobile web map of ZET tram/bus stops, HŽ train stations and Bajs bike stations in Zagreb.
 Tap a stop to see the nearest Bajs stations (and the other way round); ◎ shows what's near you.
 
-Static data only for now: station locations and lines, no live bikes or vehicles.
+## Route planning
+
+Type a destination in **To** (or tap *Route here* on a stop, a Bajs station, or after a long-press
+on the map). **From** defaults to your location. You get walk + Bajs + tram/bus/train options
+sorted by arrival time; tap one to see it on the map with step-by-step directions.
+
+Routes come from the free [Transitous](https://transitous.org) API (non-commercial use only,
+see its [usage policy](https://transitous.org/api/)). Only Bajs is allowed as a rental system.
+Transitous uses live Bajs availability and ZET delays; the station layer on the map is static.
 
 ## Run
 

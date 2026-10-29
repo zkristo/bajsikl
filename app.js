@@ -17,7 +17,7 @@ const map = L.map('map', { zoomControl: false }).setView(ZAGREB_CENTER, 14);
 
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 19,
-  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> | Stops: ZET, HŽPP | Bikes: Bajs/nextbike',
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> | Data: ZET, HŽPP, Bajs | Routes: <a href="https://transitous.org/sources/">Transitous</a> | <a href="https://github.com/zkristo/bajsikl">bajsikl</a>',
 }).addTo(map);
 
 // All stations share one canvas: stacked canvases would swallow each other's taps.
@@ -129,6 +129,7 @@ function stopPopup(stop) {
     ${lineBadges(stop)}
     <h4>Nearest Bajs stations</h4>
     ${placeList(nearest(stop.latlng, bajsStations, NEARBY_BAJS))}
+    ${routeActions(stop.name, stop.latlng)}
   </div>`;
 }
 
@@ -142,6 +143,7 @@ function bajsPopup(station) {
     <h4>Nearest stops</h4>
     ${placeList(nearestStops(station.latlng))}
     ${appLink}
+    ${routeActions(station.name, station.latlng)}
   </div>`;
 }
 
