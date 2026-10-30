@@ -52,3 +52,20 @@ Rewrites `data/stops.json` and `data/bajs.json` from:
 - Bajs GBFS: https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_hd/en/station_information.json
 
 The HŽPP timetable changes every December; rerun the script after that.
+
+## claude.ai artifact version
+
+```sh
+python3 tools/build_artifact.py
+```
+
+Writes a version of the map that runs as a claude.ai artifact into `build/artifact/` (not committed):
+`index.html` plus `tiles/*.txt`. Artifact pages can't load anything from other servers, so the page
+carries the libraries pinned in `index.html`, `style.css`, `app.js`, `route.js` and the station data,
+and the tiles folder holds OpenFreeMap's vector tiles, fonts and icons for the ZET service area
+(zoom 9–14, about 30 MB; only the parts in view load). `tools/artifact/` has the artifact-only glue.
+Downloads are cached in `build/cache/`; delete it to fetch fresh map data.
+
+Publish `index.html` as the page with every `tiles/<name>.txt` beside it at the same path. In the
+artifact, route planning and "my location" don't work (no outside servers, no location access), and
+the "Detailed" map style stays blank.

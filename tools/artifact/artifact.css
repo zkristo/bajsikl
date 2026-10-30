@@ -1,0 +1,28 @@
+/* Only in the claude.ai artifact build (tools/build_artifact.py), after style.css. */
+
+/* Fill the frame whatever height the page gets, clear of a phone's notch. */
+#map {
+  position: fixed;
+  top: env(safe-area-inset-top, 0px);
+  right: 0;
+  bottom: env(safe-area-inset-bottom, 0px);
+  left: 0;
+  height: auto;
+}
+
+/* Messages that would otherwise go to alert(), which the artifact viewer hides. */
+#notice {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 10px);
+  left: 50%;
+  z-index: 2000;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #212529;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+  color: #fff;
+  font-size: 14px;
+  transform: translateX(-50%);
+}
