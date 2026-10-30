@@ -390,7 +390,7 @@ function optionSummary(it) {
 function legChip(leg) {
   const kind = legKind(leg);
   const label = kind === 'walk' || kind === 'bajs' ? formatDuration(leg.duration) : leg.routeShortName || LEG_LABELS[kind];
-  return `<span class="leg leg-${kind}" style="--leg-color:${LEG_COLORS[kind]}">${LEG_ICONS[kind]} ${esc(label)}</span>`;
+  return `<span class="leg leg-${kind}" style="--leg-color:${LEG_COLORS[kind]};--leg-ink:${inkOn(kind)}">${LEG_ICONS[kind]} ${esc(label)}</span>`;
 }
 
 function stepsHtml(it) {

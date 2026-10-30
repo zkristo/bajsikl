@@ -6,8 +6,11 @@ const NEARBY_STOPS = 4;
 const NEAR_METERS = 250;
 const MID_METERS = 500;
 
-const COLORS = { tram: '#1c62c4', bus: '#2f9e44', train: '#7048e8', bajs: '#f76707', me: '#e03131' };
+// Bajs and ZET are shades of blue told apart by lightness (dark tram, mid Bajs, light bus); trains are red.
+const COLORS = { tram: '#1c3d8c', bus: '#4dabf7', train: '#e03131', bajs: '#1971c2', me: '#f76707' };
+const INK = { bus: '#0b2545' }; // text on a coloured badge; white unless listed
 const KIND_LABEL = { tram: 'Tram stop', bus: 'Bus stop', train: 'Train station', bajs: 'Bajs station' };
+const DOT_RADIUS = 6;
 
 const OSM_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
 const OFM_ATTRIBUTION = `<a href="https://openfreemap.org">OpenFreeMap</a> &copy; <a href="https://www.openmaptiles.org/">OpenMapTiles</a> ${OSM_ATTRIBUTION}`;
@@ -16,12 +19,15 @@ const BASEMAPS = {
   light: { label: 'Light', style: 'https://tiles.openfreemap.org/styles/positron' },
   detailed: { label: 'Detailed', tiles: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png' },
 };
+const DARK_BASEMAP = { style: 'https://tiles.openfreemap.org/styles/dark' };
 // Shop/restaurant icons, one-way arrows and road shields clutter the map at city zoom.
 const CLUTTER_LAYERS = /^(poi_|road_one_way_arrow|highway-shield|road_shield)/;
 
 const ICONS = {
   layers: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3 2 8.5 12 14l10-5.5z"/><path d="m2 13.5 10 5.5 10-5.5"/></svg>',
   locate: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="3" fill="currentColor"/><path d="M12 1.5v3M12 19.5v3M1.5 12h3M19.5 12h3"/></svg>',
+  moon: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>',
+  sun: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></svg>',
 };
 
 let stops = [];
@@ -49,24 +55,49 @@ map.getPane('me').style.pointerEvents = 'none';
 
 let basemap = null;
 let basemapRequest = 0;
-setBasemap(readSetting('basemap', 'clean'));
+let basemapChoice = readSetting('basemap', 'clean');
+let theme = readSetting('theme', matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+showBasemap();
 
-async function setBasemap(key) {
+// Dark mode has its own map style; the "Map style" chips pick the light-mode one.
+async function showBasemap() {
   const id = ++basemapRequest;
-  if (!BASEMAPS[key] || (BASEMAPS[key].style && !webglSupported())) key = 'detailed';
+  let source = theme === 'dark' ? DARK_BASEMAP : BASEMAPS[basemapChoice] || BASEMAPS.clean;
+  if (source.style && !webglSupported()) source = BASEMAPS.detailed;
   let layer;
   try {
-    layer = await createBasemap(BASEMAPS[key]);
+    layer = await createBasemap(source);
   } catch {
-    key = 'detailed'; // the vector style could not be downloaded
-    layer = await createBasemap(BASEMAPS[key]);
+    layer = await createBasemap(BASEMAPS.detailed); // the vector style could not be downloaded
   }
   if (id !== basemapRequest) return;
   if (basemap) map.removeLayer(basemap);
   basemap = layer.addTo(map);
+}
+
+function chooseBasemap(key) {
+  basemapChoice = key;
   saveSetting('basemap', key);
+  if (theme === 'dark') setTheme('light');
+  else showBasemap();
+  updateMapButtons();
+}
+
+function setTheme(value) {
+  theme = value;
+  saveSetting('theme', value);
+  showBasemap();
+  updateMapButtons();
+}
+
+function updateMapButtons() {
+  const dark = theme === 'dark';
+  document.documentElement.classList.toggle('dark', dark);
+  const themeButton = document.querySelector('.theme-btn');
+  themeButton.title = dark ? 'Light mode' : 'Dark mode';
+  themeButton.setAttribute('aria-label', themeButton.title);
   for (const button of document.querySelectorAll('[data-basemap]')) {
-    button.setAttribute('aria-pressed', String(button.dataset.basemap === key));
+    button.setAttribute('aria-pressed', String(!dark && button.dataset.basemap === basemapChoice));
   }
 }
 
@@ -133,7 +164,7 @@ const LayersControl = L.Control.extend({
       });
     }
     for (const button of container.querySelectorAll('[data-basemap]')) {
-      button.addEventListener('click', () => setBasemap(button.dataset.basemap));
+      button.addEventListener('click', () => chooseBasemap(button.dataset.basemap));
     }
     // Any tap outside the panel closes it (map 'click' doesn't fire for taps on stations).
     document.addEventListener('pointerdown', (e) => {
@@ -143,6 +174,22 @@ const LayersControl = L.Control.extend({
   },
 });
 new LayersControl({ position: 'bottomright' }).addTo(map);
+
+// Light/dark mode; the icon shows the mode a tap switches to. Both icons stay in the
+// button and CSS shows one: replacing them mid-tap would let the tap reach the map
+// and close any open popup.
+const ThemeControl = L.Control.extend({
+  onAdd() {
+    const button = L.DomUtil.create('button', 'map-btn theme-btn');
+    button.type = 'button';
+    button.innerHTML = `<span class="to-dark">${ICONS.moon}</span><span class="to-light">${ICONS.sun}</span>`;
+    L.DomEvent.disableClickPropagation(button);
+    L.DomEvent.on(button, 'click', () => setTheme(theme === 'dark' ? 'light' : 'dark'));
+    return button;
+  },
+});
+new ThemeControl({ position: 'bottomright' }).addTo(map);
+updateMapButtons();
 
 function toggleLayer(kind) {
   const visible = hiddenLayers.has(kind);
@@ -183,21 +230,22 @@ function init(stopItems, bajsItems) {
   });
 
   for (const stop of stops) {
-    stop.marker = L.circleMarker(stop.latlng, {
+    stop.marker = new StopMarker(stop.latlng, {
       renderer: stationsRenderer,
-      radius: stop.kind === 'bus' ? 4 : 6,
+      radius: DOT_RADIUS,
       color: '#fff',
       weight: 1.5,
       fillColor: COLORS[stop.kind],
       fillOpacity: 1,
+      bearings: stop.bearings,
     }).bindPopup(() => stopPopup(stop)).addTo(layers[stop.kind]);
   }
   for (const station of bajsStations) {
     station.marker = L.circleMarker(station.latlng, {
       renderer: stationsRenderer,
-      radius: 8,
+      radius: DOT_RADIUS,
       color: '#fff',
-      weight: 2,
+      weight: 1.5,
       fillColor: COLORS.bajs,
       fillOpacity: 1,
     }).bindPopup(() => bajsPopup(station)).addTo(layers.bajs);
@@ -209,13 +257,46 @@ function init(stopItems, bajsItems) {
   }
 }
 
+// A stop's dot with a small pointer for each way vehicles leave it (bearings in degrees
+// from north). Drawn on the shared canvas; taps still hit only the round dot.
+const StopMarker = L.CircleMarker.extend({
+  _updateBounds() {
+    L.CircleMarker.prototype._updateBounds.call(this);
+    if (!this.options.bearings.length) return;
+    const pad = L.point(this._radius, this._radius);
+    this._pxBounds = L.bounds(this._pxBounds.min.subtract(pad), this._pxBounds.max.add(pad));
+  },
+
+  _updatePath() {
+    const renderer = this._renderer;
+    renderer._updateCircle(this);
+    if (!renderer._drawing || this._empty()) return;
+    const ctx = renderer._ctx;
+    const { x, y } = this._point;
+    const r = this._radius;
+    for (const bearing of this.options.bearings) {
+      const angle = ((bearing - 90) * Math.PI) / 180; // canvas angles start east, turning clockwise
+      const at = (out, side) => [
+        x + out * Math.cos(angle) - side * Math.sin(angle),
+        y + out * Math.sin(angle) + side * Math.cos(angle),
+      ];
+      ctx.beginPath();
+      ctx.moveTo(...at(r * 2, 0));
+      ctx.lineTo(...at(r + 1, r * 0.75));
+      ctx.lineTo(...at(r + 1, -r * 0.75));
+      ctx.closePath();
+      renderer._fillStroke(ctx, this);
+    }
+  },
+});
+
 // Popups ---------------------------------------------------------------------
 
 function stopPopup(stop) {
   return `<div class="popup">
     <h3>${esc(stop.name)}</h3>
     <div class="sub">${KIND_LABEL[stop.kind]}</div>
-    ${lineBadges(stop)}
+    ${directionList(stop)}
     <h4>Nearest Bajs stations</h4>
     ${placeList(nearest(stop.latlng, bajsStations, NEARBY_BAJS))}
     ${routeActions(stop.name, stop.latlng)}
@@ -255,21 +336,41 @@ function placeList(hits) {
   return `<ul>${items.join('')}</ul>`;
 }
 
-function lineBadges(stop) {
-  const badges = [
-    ...stop.tram.map((line) => badge(line, COLORS.tram)),
-    ...stop.bus.map((line) => badge(line, COLORS.bus)),
-  ];
-  return badges.length ? `<div>${badges.join('')}</div>` : '';
+// Where departures from this platform go, each with the lines that go there.
+function directionList(stop) {
+  const directions = stop.directions || [];
+  if (stop.kind === 'train') {
+    return directions.length
+      ? `<div class="towards">Trains to ${esc(directions.map((d) => d.to).join(', '))}</div>`
+      : '';
+  }
+  if (!directions.length) return `${lineBadges(stop.tram, stop.bus)}<div class="muted">Trips end here</div>`;
+  const rows = directions.map((d) => `
+    <li><span class="to">→ ${esc(d.to)}</span>
+      <span>${lineBadges(d.lines.filter((line) => stop.tram.includes(line)), d.lines.filter((line) => !stop.tram.includes(line)))}</span></li>`);
+  return `<ul class="directions">${rows.join('')}</ul>`;
 }
 
-function badge(text, color) {
-  return `<span class="badge" style="background:${color}">${esc(text)}</span>`;
+function lineBadges(tram, bus) {
+  return [...tram.map((line) => badge(line, 'tram')), ...bus.map((line) => badge(line, 'bus'))].join('');
+}
+
+function badge(text, kind) {
+  return `<span class="badge" style="background:${COLORS[kind]};color:${inkOn(kind)}">${esc(text)}</span>`;
+}
+
+function inkOn(kind) {
+  return INK[kind] || '#fff';
 }
 
 function shortLines(place) {
   const lines = [...(place.tram || []), ...(place.bus || [])];
-  return lines.length ? ` <small>(${esc(lines.join(', '))})</small>` : '';
+  const towards = place.kind === 'train' ? [] : (place.directions || []).map((d) => d.to);
+  const parts = [
+    lines.length ? `(${lines.join(', ')})` : '',
+    towards.length ? `→ ${towards.slice(0, 2).join(', ')}${towards.length > 2 ? '…' : ''}` : '',
+  ].filter(Boolean);
+  return parts.length ? ` <small>${esc(parts.join(' '))}</small>` : '';
 }
 
 function legend(kind, label) {
@@ -314,12 +415,13 @@ function nearest(latlng, candidates, count) {
     .slice(0, count);
 }
 
-// GTFS has one stop per platform, so keep only the closest platform of each named stop.
+// GTFS has one stop per platform, so keep only the closest platform of each named stop
+// and direction (the platforms across the street go the other way).
 function nearestStops(latlng) {
   const seen = new Set();
   return nearest(latlng, stops, stops.length)
     .filter(({ place }) => {
-      const key = `${place.kind}|${place.name}`;
+      const key = `${place.kind}|${place.name}|${(place.directions || []).map((d) => d.to).join()}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;

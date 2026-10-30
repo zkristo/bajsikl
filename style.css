@@ -1,10 +1,85 @@
+/* Colours of the panels around the map; .dark on <html> switches them (the map style switches in app.js). */
+:root {
+  --bg: #fff;
+  --bg-soft: #f1f3f5;
+  --text: #212529;
+  --icon: #3c4043;
+  --muted: #666;
+  --label: #555;
+  --line: #eee;
+  --border: #dee2e6;
+  --field: #ced4da;
+  --accent: #1c62c4;
+  --on-accent: #fff;
+  --accent-soft: #e7f0fd;
+  --good: #2b8a3e;
+  --warn: #e67700;
+  --bad: #c92a2a;
+  --walk-bg: #e9ecef;
+  --walk-ink: #333;
+  --end-bg: #212529;
+  --end-ink: #fff;
+  --shadow: rgba(0, 0, 0, 0.3);
+  --map-bg: #ddd;
+}
+
+:root.dark {
+  --bg: #1f2328;
+  --bg-soft: #2d3239;
+  --text: #e9ecef;
+  --icon: #dee2e6;
+  --muted: #a7b0ba;
+  --label: #b4bcc4;
+  --line: #343a40;
+  --border: #3d444c;
+  --field: #4b535c;
+  --accent: #74a9ff;
+  --on-accent: #0b1a33;
+  --accent-soft: #1c2d4a;
+  --good: #69db7c;
+  --warn: #ffa94d;
+  --bad: #ff8787;
+  --walk-bg: #343a40;
+  --walk-ink: #dee2e6;
+  --end-bg: #e9ecef;
+  --end-ink: #212529;
+  --shadow: rgba(0, 0, 0, 0.6);
+  --map-bg: #1b1e22;
+  color-scheme: dark;
+}
+
 html, body, #map {
   height: 100%;
   margin: 0;
 }
 
 body {
+  background: var(--map-bg);
+  color: var(--text);
   font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.leaflet-container {
+  background: var(--map-bg);
+}
+
+.leaflet-container a {
+  color: var(--accent);
+}
+
+/* Raster tiles ("Detailed", or the fallback without WebGL) have no dark style of their own. */
+.dark .leaflet-tile {
+  filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.9);
+}
+
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.leaflet-container a.leaflet-popup-close-button {
+  color: var(--muted);
 }
 
 .leaflet-popup-content {
@@ -19,7 +94,7 @@ body {
 }
 
 .popup .sub {
-  color: #666;
+  color: var(--muted);
   margin-bottom: 8px;
 }
 
@@ -28,7 +103,7 @@ body {
   font-size: 13px;
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  color: #555;
+  color: var(--label);
 }
 
 .popup ul {
@@ -44,8 +119,9 @@ body {
   width: 100%;
   padding: 7px 0;
   border: 0;
-  border-top: 1px solid #eee;
+  border-top: 1px solid var(--line);
   background: none;
+  color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
@@ -56,9 +132,30 @@ body {
   font-weight: 600;
 }
 
-.dist.near { color: #2b8a3e; }
-.dist.mid { color: #e67700; }
-.dist.far { color: #c92a2a; }
+.dist.near { color: var(--good); }
+.dist.mid { color: var(--warn); }
+.dist.far { color: var(--bad); }
+
+/* Where a stop's departures go: one row per destination with its lines. */
+.popup .directions li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  padding: 3px 0;
+}
+
+.directions .to {
+  font-weight: 600;
+}
+
+.directions li > span:last-child {
+  text-align: right;
+}
+
+.towards {
+  color: var(--muted);
+}
 
 .badge {
   display: inline-block;
@@ -90,6 +187,11 @@ body {
   font-size: 10px;
 }
 
+.dark .leaflet-control-attribution {
+  background: rgba(31, 35, 40, 0.8);
+  color: var(--muted);
+}
+
 /* Round map buttons (bottom right) */
 
 .map-btn {
@@ -101,10 +203,23 @@ body {
   padding: 0;
   border: 0;
   border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.3);
-  color: #3c4043;
+  background: var(--bg);
+  box-shadow: 0 1px 5px var(--shadow);
+  color: var(--icon);
   cursor: pointer;
+}
+
+.theme-btn span {
+  display: flex;
+}
+
+.theme-btn .to-light,
+.dark .theme-btn .to-dark {
+  display: none;
+}
+
+.dark .theme-btn .to-light {
+  display: flex;
 }
 
 .leaflet-right .leaflet-control {
@@ -133,8 +248,8 @@ body {
   width: 250px;
   padding: 4px 12px 12px;
   border-radius: 12px;
-  background: #fff;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+  background: var(--bg);
+  box-shadow: 0 2px 10px var(--shadow);
 }
 
 .layers-control.open .layers-panel {
@@ -143,7 +258,7 @@ body {
 
 .layers-panel h4 {
   margin: 10px 0 6px;
-  color: #555;
+  color: var(--label);
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -159,9 +274,10 @@ body {
   display: flex;
   align-items: center;
   padding: 7px 11px;
-  border: 1px solid #dee2e6;
+  border: 1px solid var(--border);
   border-radius: 18px;
-  background: #fff;
+  background: var(--bg);
+  color: var(--text);
   font: inherit;
   font-size: 14px;
   cursor: pointer;
@@ -176,9 +292,9 @@ body {
 }
 
 .chip[data-basemap][aria-pressed="true"] {
-  border-color: #1c62c4;
-  background: #e7f0fd;
-  color: #1c62c4;
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
   font-weight: 600;
 }
 
@@ -197,8 +313,8 @@ body {
   padding: 8px;
   box-sizing: border-box;
   border-radius: 10px;
-  background: #fff;
-  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.35);
+  background: var(--bg);
+  box-shadow: 0 1px 5px var(--shadow);
 }
 
 .route-field {
@@ -210,7 +326,7 @@ body {
 
 .route-field span {
   width: 38px;
-  color: #666;
+  color: var(--muted);
   font-size: 13px;
 }
 
@@ -218,8 +334,10 @@ body {
   flex: 1;
   min-width: 0;
   padding: 8px 10px;
-  border: 1px solid #ced4da;
+  border: 1px solid var(--field);
   border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
   font: inherit;
   font-size: 16px; /* 16px stops iOS from zooming in on focus */
 }
@@ -230,7 +348,8 @@ body {
   width: 40px;
   border: 0;
   border-radius: 6px;
-  background: #f1f3f5;
+  background: var(--bg-soft);
+  color: var(--text);
   font-size: 20px;
   cursor: pointer;
 }
@@ -257,8 +376,9 @@ body {
   width: 100%;
   padding: 10px 6px;
   border: 0;
-  border-top: 1px solid #eee;
+  border-top: 1px solid var(--line);
   background: none;
+  color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
@@ -266,7 +386,7 @@ body {
 
 .suggestions small,
 .muted {
-  color: #777;
+  color: var(--muted);
 }
 
 .route-actions {
@@ -278,18 +398,18 @@ body {
 .route-actions button {
   flex: 1;
   padding: 8px;
-  border: 1px solid #1c62c4;
+  border: 1px solid var(--accent);
   border-radius: 6px;
-  background: #fff;
-  color: #1c62c4;
+  background: var(--bg);
+  color: var(--accent);
   font: inherit;
   font-weight: 600;
   cursor: pointer;
 }
 
 .route-actions button[data-route="to"] {
-  background: #1c62c4;
-  color: #fff;
+  background: var(--accent);
+  color: var(--on-accent);
 }
 
 /* Results sheet at the bottom; Leaflet's bottom controls move up above it. */
@@ -309,8 +429,8 @@ body {
   overscroll-behavior: contain;
   padding: 0 14px 14px;
   border-radius: 14px 14px 0 0;
-  background: #fff;
-  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.25);
+  background: var(--bg);
+  box-shadow: 0 -2px 10px var(--shadow);
   transition: transform 0.2s;
 }
 
@@ -333,7 +453,7 @@ body {
   top: 0;
   z-index: 1;
   padding: 6px 0;
-  background: #fff;
+  background: var(--bg);
   cursor: pointer;
 }
 
@@ -342,7 +462,7 @@ body {
   height: 5px;
   margin: 2px auto 6px;
   border-radius: 3px;
-  background: #ced4da;
+  background: var(--field);
 }
 
 .sheet-title {
@@ -363,7 +483,8 @@ body {
   height: 36px;
   border: 0;
   border-radius: 50%;
-  background: #f1f3f5;
+  background: var(--bg-soft);
+  color: var(--text);
   font-size: 22px;
   cursor: pointer;
 }
@@ -382,17 +503,18 @@ body {
   width: 100%;
   margin-top: 8px;
   padding: 10px;
-  border: 1px solid #dee2e6;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: #fff;
+  background: var(--bg);
+  color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
 
 .option.selected {
-  border-color: #1c62c4;
-  box-shadow: 0 0 0 1px #1c62c4;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 
 .option-times {
@@ -415,15 +537,15 @@ body {
   padding: 2px 6px;
   border-radius: 4px;
   background: var(--leg-color);
-  color: #fff;
+  color: var(--leg-ink, #fff);
   font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
 }
 
 .leg-walk {
-  background: #e9ecef;
-  color: #333;
+  background: var(--walk-bg);
+  color: var(--walk-ink);
 }
 
 .steps {
@@ -435,7 +557,7 @@ body {
   gap: 10px;
   align-items: flex-start;
   padding: 8px 0;
-  border-bottom: 1px solid #f1f3f5;
+  border-bottom: 1px solid var(--line);
 }
 
 .step-time {
@@ -456,13 +578,13 @@ body {
 }
 
 .step-end {
-  background: #212529;
-  color: #fff;
+  background: var(--end-bg);
+  color: var(--end-ink);
 }
 
-.late { color: #c92a2a; font-weight: 600; }
-.early { color: #e67700; font-weight: 600; }
-.on-time { color: #2b8a3e; }
+.late { color: var(--bad); font-weight: 600; }
+.early { color: var(--warn); font-weight: 600; }
+.on-time { color: var(--good); }
 
 .leaflet-stations-pane.faded {
   opacity: 0.3;

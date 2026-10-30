@@ -3,13 +3,17 @@
 **Live:** https://zkristo.github.io/bajsikl/
 
 Mobile web map of ZET tram/bus stops, HŽ train stations and Bajs bike stations in Zagreb.
-Tap a stop to see the nearest Bajs stations (and the other way round).
+Tap a stop to see where its trams, buses or trains go and the nearest Bajs stations (and the other
+way round). Each tram and bus stop has a small pointer for the direction its vehicles leave in, so
+you can tell the platforms on either side of a street apart.
 
-Buttons (bottom right): 🔍 plan a route, layers (which stations to show + map style), and my location.
+Buttons (bottom right): 🔍 plan a route, light/dark mode (moon/sun), layers (which stations to show +
+map style), and my location.
 
 Map styles: **Clean** (default; OpenFreeMap "Liberty" without shop/POI icons, one-way arrows and
 road shields), **Light** (OpenFreeMap "Positron") and **Detailed** (standard OpenStreetMap).
-The choice and hidden station types are remembered on the device.
+Dark mode uses OpenFreeMap "Dark"; picking a map style switches back to light mode.
+Light/dark mode starts from the device setting. Your choices and hidden station types are remembered on the device.
 
 ## Route planning
 
