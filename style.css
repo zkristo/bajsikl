@@ -1,5 +1,15 @@
-/* Colours of the panels around the map; .dark on <html> switches them (the map style switches in app.js). */
+/* Colours of the stations and the panels around the map; .dark on <html> switches them
+   (the map style switches in app.js, which also reads the station colours for the canvas). */
 :root {
+  --tram: #3d4349;
+  --tram-ink: #fff;
+  --bus: #6c757d;
+  --bus-ink: #fff;
+  --train: #e03131;
+  --train-ink: #fff;
+  --bajs: #1971c2;
+  --bajs-ink: #fff;
+  --walk: #868e96;
   --bg: #fff;
   --bg-soft: #f1f3f5;
   --text: #212529;
@@ -24,6 +34,15 @@
 }
 
 :root.dark {
+  --tram: #9aa3ad;
+  --tram-ink: #16191d;
+  --bus: #c8ced5;
+  --bus-ink: #16191d;
+  --train: #ff8787;
+  --train-ink: #3b0d0d;
+  --bajs: #4dabf7;
+  --bajs-ink: #0b2545;
+  --walk: #adb5bd;
   --bg: #1f2328;
   --bg-soft: #2d3239;
   --text: #e9ecef;
@@ -44,7 +63,7 @@
   --end-bg: #e9ecef;
   --end-ink: #212529;
   --shadow: rgba(0, 0, 0, 0.6);
-  --map-bg: #1b1e22;
+  --map-bg: #24282e;
   color-scheme: dark;
 }
 
@@ -136,7 +155,13 @@ body {
 .dist.mid { color: var(--warn); }
 .dist.far { color: var(--bad); }
 
-/* Where a stop's departures go: one row per destination with its lines. */
+/* Where a stop's departures go: one row per destination with its lines. Big stops
+   (all platforms together when zoomed out) scroll inside the popup. */
+.popup .directions {
+  max-height: 34vh;
+  overflow-y: auto;
+}
+
 .popup .directions li {
   display: flex;
   justify-content: space-between;
@@ -157,13 +182,19 @@ body {
   color: var(--muted);
 }
 
+/* Station colours on badges, legend dots and route chips. */
+.kind-tram { background: var(--tram); color: var(--tram-ink); }
+.kind-bus { background: var(--bus); color: var(--bus-ink); }
+.kind-train { background: var(--train); color: var(--train-ink); }
+.kind-bajs { background: var(--bajs); color: var(--bajs-ink); }
+.kind-walk { background: var(--walk-bg); color: var(--walk-ink); }
+
 .badge {
   display: inline-block;
   min-width: 18px;
   margin: 0 3px 3px 0;
   padding: 1px 5px;
   border-radius: 4px;
-  color: #fff;
   font-size: 12px;
   font-weight: 600;
   text-align: center;
@@ -175,6 +206,13 @@ body {
   height: 10px;
   margin-right: 6px;
   border-radius: 50%;
+}
+
+/* Same shapes as the map: rounded squares for stops, circles for Bajs. */
+.dot.kind-tram,
+.dot.kind-bus,
+.dot.kind-train {
+  border-radius: 3px;
 }
 
 .popup .app-link {
@@ -536,16 +574,9 @@ body {
 .leg {
   padding: 2px 6px;
   border-radius: 4px;
-  background: var(--leg-color);
-  color: var(--leg-ink, #fff);
   font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
-}
-
-.leg-walk {
-  background: var(--walk-bg);
-  color: var(--walk-ink);
 }
 
 .steps {

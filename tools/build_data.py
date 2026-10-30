@@ -6,7 +6,6 @@ Usage:  python3 tools/build_data.py            (writes into ./data)
 import csv
 import io
 import json
-import math
 import sys
 import tempfile
 import urllib.request
@@ -21,10 +20,6 @@ BAJS_STATIONS = "https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_hd/en/station_i
 
 GTFS_TRAM, GTFS_RAIL, GTFS_BUS = "0", "2", "3"
 OUT_DIR = Path(__file__).resolve().parent.parent / "data"
-# Departures towards next stops within this many degrees count as one direction, and a
-# direction needs this share of a platform's departures to get an arrow on the map.
-SAME_DIRECTION_DEGREES = 45
-MIN_DIRECTION_SHARE = 0.15
 
 
 def download(url, dest):
@@ -44,7 +39,7 @@ def read_csv(zf, name):
 def served_stops(zf, wanted_route_types):
     """Return {stop_id: details} for stops that are actually served, where details has
     "lines" ({route_type: {route_short_name, ...}}), "directions" ({headsign: {line, ...}},
-    departures only) and "bearings" (degrees from north towards the next stops, busiest first)."""
+    departures only) and "departures" (trips leaving the stop in the whole timetable)."""
     routes = {
         r["route_id"]: (r["route_type"], r["route_short_name"])
         for r in read_csv(zf, "routes.txt")
@@ -65,48 +60,19 @@ def served_stops(zf, wanted_route_types):
         patterns[(*trips[trip_id], tuple(stop_id for _, stop_id in sorted(stop_list)))] += 1
     del stops_by_trip
 
-    coords, names = {}, {}
-    for s in read_csv(zf, "stops.txt"):
-        names[s["stop_id"]] = s["stop_name"]
-        if float(s["stop_lat"] or 0) and float(s["stop_lon"] or 0):
-            coords[s["stop_id"]] = (float(s["stop_lat"]), float(s["stop_lon"]))
-
+    names = {s["stop_id"]: s["stop_name"] for s in read_csv(zf, "stops.txt")}
     details = {}
     for (route_id, headsign, stop_ids), count in patterns.items():
         route_type, line = routes[route_id]
         headsign = headsign or names.get(stop_ids[-1], "")  # HŽPP trips have no headsign
         for here, after in zip(stop_ids, stop_ids[1:] + (None,)):
-            d = details.setdefault(here, {"lines": {}, "directions": {}, "next": Counter()})
+            d = details.setdefault(here, {"lines": {}, "directions": {}, "departures": 0})
             d["lines"].setdefault(route_type, set()).add(line)
             if after is None or after == here:  # trips end here
                 continue
             d["directions"].setdefault(headsign, set()).add(line)
-            if here in coords and after in coords:
-                d["next"][bearing(coords[here], coords[after])] += count
-    for d in details.values():
-        d["bearings"] = main_bearings(d.pop("next"))
+            d["departures"] += count
     return details
-
-
-def bearing(start, end):
-    """Compass bearing in degrees from start to end, both (lat, lon); fine for short hops."""
-    (lat1, lon1), (lat2, lon2) = start, end
-    east = (lon2 - lon1) * math.cos(math.radians((lat1 + lat2) / 2))
-    return round(math.degrees(math.atan2(east, lat2 - lat1))) % 360
-
-
-def main_bearings(departures):
-    """Group {bearing: departures} into directions; return the busy ones, busiest first."""
-    groups = []  # [bearing of the busiest member, departures]
-    for angle, count in departures.most_common():
-        for group in groups:
-            if abs((angle - group[0] + 180) % 360 - 180) <= SAME_DIRECTION_DEGREES:
-                group[1] += count
-                break
-        else:
-            groups.append([angle, count])
-    total = sum(departures.values())
-    return [angle for angle, count in sorted(groups, key=lambda g: -g[1]) if count >= MIN_DIRECTION_SHARE * total]
 
 
 def directions_list(directions):
@@ -148,14 +114,13 @@ def zet_stops(path):
                 "tram": tram,
                 "bus": bus,
                 "directions": directions_list(details["directions"]),
-                "bearings": details["bearings"],
+                "departures": details["departures"],
             })
     return stops
 
 
 def train_stations(path, bbox):
-    """Train stations inside the ZET service area (HŽPP covers all of Croatia).
-    One station serves both ways, so it gets destinations but no direction arrow."""
+    """Train stations inside the ZET service area (HŽPP covers all of Croatia)."""
     min_lat, min_lon, max_lat, max_lon = bbox
     with zipfile.ZipFile(path) as zf:
         served = served_stops(zf, {GTFS_RAIL})
@@ -171,7 +136,7 @@ def train_stations(path, bbox):
                     "tram": [],
                     "bus": [],
                     "directions": directions_list(served[s["stop_id"]]["directions"]),
-                    "bearings": [],
+                    "departures": served[s["stop_id"]]["departures"],
                 })
     return stations
 

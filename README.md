@@ -4,8 +4,12 @@
 
 Mobile web map of ZET tram/bus stops, HŽ train stations and Bajs bike stations in Zagreb.
 Tap a stop to see where its trams, buses or trains go and the nearest Bajs stations (and the other
-way round). Each tram and bus stop has a small pointer for the direction its vehicles leave in, so
-you can tell the platforms on either side of a street apart.
+way round).
+
+Markers: grey rounded squares with a tram or bus icon, red for trains, blue circles with a bicycle
+for Bajs. Zoomed out, each stop has one marker for all its platforms (its popup lists every
+direction) and only the busiest tenth of bus stops is shown; from zoom 16 every platform has its own
+marker.
 
 Buttons (bottom right): 🔍 plan a route, light/dark mode (moon/sun), layers (which stations to show +
 map style), and my location.
