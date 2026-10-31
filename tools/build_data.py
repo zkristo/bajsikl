@@ -10,6 +10,7 @@ import sys
 import tempfile
 import urllib.request
 import zipfile
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -35,22 +36,53 @@ def read_csv(zf, name):
         yield from csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
 
 
-def routes_per_stop(zf, wanted_route_types):
-    """Return {stop_id: {route_type: {route_short_name, ...}}} for stops that are actually served."""
+def served_stops(zf, wanted_route_types):
+    """Return {stop_id: details} for stops that are actually served, where details has
+    "lines" ({route_type: {route_short_name, ...}}), "directions" ({headsign: {line, ...}},
+    departures only) and "departures" (trips leaving the stop in the whole timetable)."""
     routes = {
         r["route_id"]: (r["route_type"], r["route_short_name"])
         for r in read_csv(zf, "routes.txt")
         if r["route_type"] in wanted_route_types
     }
-    trip_route = {t["trip_id"]: t["route_id"] for t in read_csv(zf, "trips.txt") if t["route_id"] in routes}
-    served = {}
+    trips = {
+        t["trip_id"]: (t["route_id"], t.get("trip_headsign", ""))
+        for t in read_csv(zf, "trips.txt")
+        if t["route_id"] in routes
+    }
+    stops_by_trip = {}
     for st in read_csv(zf, "stop_times.txt"):
-        route_id = trip_route.get(st["trip_id"])
-        if route_id is None:
-            continue
-        route_type, name = routes[route_id]
-        served.setdefault(st["stop_id"], {}).setdefault(route_type, set()).add(name)
-    return served
+        if st["trip_id"] in trips:
+            stops_by_trip.setdefault(st["trip_id"], []).append((int(st["stop_sequence"]), st["stop_id"]))
+    # Most trips repeat a few stop sequences; work per sequence, weighted by its number of trips.
+    patterns = Counter()
+    for trip_id, stop_list in stops_by_trip.items():
+        patterns[(*trips[trip_id], tuple(stop_id for _, stop_id in sorted(stop_list)))] += 1
+    del stops_by_trip
+
+    names = {s["stop_id"]: s["stop_name"] for s in read_csv(zf, "stops.txt")}
+    details = {}
+    for (route_id, headsign, stop_ids), count in patterns.items():
+        route_type, line = routes[route_id]
+        headsign = headsign or names.get(stop_ids[-1], "")  # HŽPP trips have no headsign
+        for here, after in zip(stop_ids, stop_ids[1:] + (None,)):
+            d = details.setdefault(here, {"lines": {}, "directions": {}, "departures": 0})
+            d["lines"].setdefault(route_type, set()).add(line)
+            if after is None or after == here:  # trips end here
+                continue
+            d["directions"].setdefault(headsign, set()).add(line)
+            d["departures"] += count
+    return details
+
+
+def directions_list(directions):
+    """[{"to": headsign, "lines": [...]}, ...] ordered by their lowest line number."""
+    items = [
+        {"to": headsign, "lines": sorted((line for line in lines if line), key=line_sort_key)}
+        for headsign, lines in directions.items()
+        if headsign
+    ]
+    return sorted(items, key=lambda d: (line_sort_key(d["lines"][0]) if d["lines"] else (2, 0, ""), d["to"]))
 
 
 def line_sort_key(name):
@@ -63,17 +95,17 @@ def round_coord(value):
 
 def zet_stops(path):
     with zipfile.ZipFile(path) as zf:
-        served = routes_per_stop(zf, {GTFS_TRAM, GTFS_BUS})
+        served = served_stops(zf, {GTFS_TRAM, GTFS_BUS})
         stops = []
         for s in read_csv(zf, "stops.txt"):
-            lines = served.get(s["stop_id"])
-            if not lines:  # parent stations and unused platforms
+            details = served.get(s["stop_id"])
+            if not details:  # parent stations and unused platforms
                 continue
             if not float(s["stop_lat"] or 0) or not float(s["stop_lon"] or 0):
                 print(f"  skipping ZET stop without coordinates: {s['stop_name']} ({s['stop_id']})")
                 continue
-            tram = sorted(lines.get(GTFS_TRAM, ()), key=line_sort_key)
-            bus = sorted(lines.get(GTFS_BUS, ()), key=line_sort_key)
+            tram = sorted(details["lines"].get(GTFS_TRAM, ()), key=line_sort_key)
+            bus = sorted(details["lines"].get(GTFS_BUS, ()), key=line_sort_key)
             stops.append({
                 "name": s["stop_name"],
                 "lat": round_coord(s["stop_lat"]),
@@ -81,6 +113,8 @@ def zet_stops(path):
                 "kind": "tram" if tram else "bus",
                 "tram": tram,
                 "bus": bus,
+                "directions": directions_list(details["directions"]),
+                "departures": details["departures"],
             })
     return stops
 
@@ -89,12 +123,21 @@ def train_stations(path, bbox):
     """Train stations inside the ZET service area (HŽPP covers all of Croatia)."""
     min_lat, min_lon, max_lat, max_lon = bbox
     with zipfile.ZipFile(path) as zf:
-        served = routes_per_stop(zf, {GTFS_RAIL})
+        served = served_stops(zf, {GTFS_RAIL})
         stations = []
         for s in read_csv(zf, "stops.txt"):
             lat, lon = round_coord(s["stop_lat"]), round_coord(s["stop_lon"])
             if s["stop_id"] in served and min_lat <= lat <= max_lat and min_lon <= lon <= max_lon:
-                stations.append({"name": s["stop_name"], "lat": lat, "lon": lon, "kind": "train", "tram": [], "bus": []})
+                stations.append({
+                    "name": s["stop_name"],
+                    "lat": lat,
+                    "lon": lon,
+                    "kind": "train",
+                    "tram": [],
+                    "bus": [],
+                    "directions": directions_list(served[s["stop_id"]]["directions"]),
+                    "departures": served[s["stop_id"]]["departures"],
+                })
     return stations
 
 

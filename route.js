@@ -1,11 +1,10 @@
 // Route planning with Transitous (https://transitous.org): walk + Bajs + ZET/HŽ.
-// Loaded after app.js and uses its map, COLORS and helpers (esc, formatDistance).
+// Loaded after app.js and uses its map, palette and helpers (esc, formatDistance).
 
 const TRANSITOUS = 'https://api.transitous.org';
 const BAJS_PROVIDER = 'hr-bajs';
 const MAX_DIRECT_SECONDS = 3600; // the 30 min default hides most "Bajs all the way" trips
 
-const LEG_COLORS = { walk: '#868e96', bajs: COLORS.bajs, tram: COLORS.tram, bus: COLORS.bus, train: COLORS.train };
 const LEG_ICONS = { walk: '🚶', bajs: '🚲', tram: '🚋', bus: '🚌', train: '🚆' };
 const LEG_LABELS = { tram: 'Tram', bus: 'Bus', train: 'Train' };
 const PLACE_TYPES = { STOP: 'Stop', ADDRESS: 'Address', PLACE: 'Place' };
@@ -390,7 +389,7 @@ function optionSummary(it) {
 function legChip(leg) {
   const kind = legKind(leg);
   const label = kind === 'walk' || kind === 'bajs' ? formatDuration(leg.duration) : leg.routeShortName || LEG_LABELS[kind];
-  return `<span class="leg leg-${kind}" style="--leg-color:${LEG_COLORS[kind]}">${LEG_ICONS[kind]} ${esc(label)}</span>`;
+  return `<span class="leg kind-${kind}">${LEG_ICONS[kind]} ${esc(label)}</span>`;
 }
 
 function stepsHtml(it) {
@@ -400,7 +399,7 @@ function stepsHtml(it) {
       const kind = legKind(leg);
       return `<li>
         <span class="step-time">${formatTime(leg.startTime)}</span>
-        <span class="step-icon" style="background:${LEG_COLORS[kind]}">${LEG_ICONS[kind]}</span>
+        <span class="step-icon kind-${kind}">${LEG_ICONS[kind]}</span>
         <span>${stepText(leg, kind)}</span>
       </li>`;
     });
@@ -454,7 +453,7 @@ function legKind(leg) {
 
 // Map drawing ----------------------------------------------------------------
 
-function drawItinerary(it) {
+function drawItinerary(it, { fit = true } = {}) {
   routeLayer.clearLayers();
   fadeStations(true);
   const bounds = L.latLngBounds([]);
@@ -467,7 +466,7 @@ function drawItinerary(it) {
     L.polyline(points, {
       pane: 'route',
       interactive: false,
-      color: LEG_COLORS[kind],
+      color: palette[kind].fill,
       weight: walk ? 4 : 6,
       dashArray: walk ? '1 8' : null,
     }).addTo(routeLayer);
@@ -478,8 +477,13 @@ function drawItinerary(it) {
   L.circleMarker([first.lat, first.lon], { pane: 'route', interactive: false, radius: 7, color: '#212529', weight: 3, fillColor: '#fff', fillOpacity: 1 }).addTo(routeLayer);
   L.circleMarker([last.lat, last.lon], { pane: 'route', interactive: false, radius: 7, color: '#fff', weight: 3, fillColor: '#212529', fillOpacity: 1 }).addTo(routeLayer);
   routeBounds = bounds;
-  fitRoute();
+  if (fit) fitRoute();
 }
+
+// Route colours follow light/dark mode; repaint without moving the map.
+document.addEventListener('themechange', () => {
+  if (itineraries.length) drawItinerary(itineraries[selected], { fit: false });
+});
 
 // Fit the route into the map area left visible by the From/To box and the sheet.
 function fitRoute() {
