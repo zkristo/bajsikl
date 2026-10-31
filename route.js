@@ -14,7 +14,8 @@ const timeFormat = new Intl.DateTimeFormat('hr-HR', { hour: '2-digit', minute: '
 
 const state = { from: null, to: null }; // from = null means "my location"
 let origin = null; // resolved start point of the current route
-let itineraries = [];
+let itineraries = []; // one per distinct route, the soonest; these are drawn on the map
+let allItineraries = []; // also later departures of the same routes
 let selected = 0;
 let planCounter = 0;
 let suggestCounter = 0;
@@ -23,9 +24,12 @@ let suggestField = null;
 let routeBounds = null;
 let sheetCollapsed = false;
 
-// The route is drawn above the stations but lets taps through to them.
+// Routes are drawn above the stations. The chosen one lets taps through to them; the
+// grey alternatives below it take taps on their lines (the pane itself lets taps through).
 map.createPane('route').style.zIndex = 415;
 map.getPane('route').style.pointerEvents = 'none';
+map.createPane('routeAlt').style.zIndex = 414;
+map.getPane('routeAlt').style.pointerEvents = 'none';
 const routeLayer = L.layerGroup().addTo(map);
 
 // From/To box ----------------------------------------------------------------
@@ -192,13 +196,11 @@ async function swapEndpoints() {
   planRoute();
 }
 
-// "Route from here / Route here" buttons, used in station popups and on long-press.
+// "Route here" button in station popups.
 
 function routeActions(name, latlng) {
-  const data = `data-name="${esc(name)}" data-lat="${latlng.lat}" data-lon="${latlng.lng}"`;
   return `<div class="route-actions">
-    <button type="button" data-route="from" ${data}>Route from here</button>
-    <button type="button" data-route="to" ${data}>Route here</button>
+    <button type="button" data-route="to" data-name="${esc(name)}" data-lat="${latlng.lat}" data-lon="${latlng.lng}">Route here</button>
   </div>`;
 }
 
@@ -212,18 +214,37 @@ map.on('popupopen', (e) => {
   }
 });
 
+// A long press (right click on a computer) plans a route to that spot, or to the station
+// whose marker is under the finger.
 map.on('contextmenu', (e) => {
-  L.popup()
-    .setLatLng(e.latlng)
-    .setContent(`<div class="popup"><h3>Point on map</h3>${routeActions('Point on map', e.latlng)}</div>`)
-    .openOn(map);
+  map.closePopup();
+  const place = places.find((p) => p.marker._map && map.latLngToContainerPoint(p.latlng).distanceTo(e.containerPoint) <= p.marker.getRadius() + 8);
+  if (place) return setEndpoint('to', { name: place.name, lat: place.lat, lon: place.lon });
+  setEndpoint('to', { name: 'Point on map', lat: e.latlng.lat, lon: e.latlng.lng });
+  nameDroppedPoint(state.to);
 });
+
+// Swap "Point on map" for the nearest address or place, when Transitous knows one.
+async function nameDroppedPoint(point) {
+  try {
+    const matches = await fetchJson(`${TRANSITOUS}/api/v1/reverse-geocode?place=${point.lat},${point.lon}`);
+    const match = matches.find((m) => m.type === 'ADDRESS') || matches[0];
+    if (!match?.name || state.to !== point) return;
+    point.name = match.name;
+    inputs.to.value = match.name;
+    const title = sheet.querySelector('.sheet-title b');
+    if (title) title.textContent = `To ${match.name}`;
+  } catch {
+    // Keep "Point on map".
+  }
+}
 
 // Planning -------------------------------------------------------------------
 
 async function planRoute() {
   const id = ++planCounter;
   itineraries = [];
+  allItineraries = [];
   selected = 0;
   routeLayer.clearLayers();
   routeBounds = null;
@@ -247,10 +268,12 @@ async function planRoute() {
     });
     const data = await fetchJson(`${TRANSITOUS}/api/v6/plan?${params}`);
     if (id !== planCounter) return;
-    itineraries = uniqueByArrival([...(data.direct || []), ...(data.itineraries || [])]);
+    allItineraries = uniqueByArrival([...(data.direct || []), ...(data.itineraries || [])]);
+    itineraries = allItineraries.filter((it, i) => allItineraries.findIndex((other) => routeKey(other) === routeKey(it)) === i);
     if (!itineraries.length) {
       return showSheet('<p>No routes found. If the start or destination is off the street network (e.g. in a lake), pick a point on a street.</p>');
     }
+    setSheetCollapsed(true); // the routes are on the map; directions are a swipe up
     selectItinerary(0);
   } catch (err) {
     if (id === planCounter) showSheet(`<p>${esc(err.message)}</p>`);
@@ -270,6 +293,11 @@ function uniqueByArrival(list) {
     .sort((a, b) => new Date(a.endTime) - new Date(b.endTime));
 }
 
+// The same way there (modes, lines and stops), whatever the time.
+function routeKey(it) {
+  return it.legs.map((leg) => `${leg.mode}:${leg.routeShortName || ''}:${leg.from.name}>${leg.to.name}`).join('|');
+}
+
 function currentPosition() {
   return new Promise((resolve, reject) => {
     const failed = () => reject(new Error('Could not get your location. Type a start point in "From".'));
@@ -285,6 +313,7 @@ function currentPosition() {
 function clearRoute() {
   planCounter++;
   itineraries = [];
+  allItineraries = [];
   state.to = null;
   inputs.to.value = '';
   routeLayer.clearLayers();
@@ -296,7 +325,7 @@ function clearRoute() {
 
 // Results sheet --------------------------------------------------------------
 
-// `summary` (the chosen option) is only shown while the sheet is minimised.
+// `summary` is the chosen route, always shown; the body (directions) hides when minimised.
 function showSheet(body, summary = '') {
   sheet.innerHTML = `
     <div class="sheet-head">
@@ -313,9 +342,7 @@ function showSheet(body, summary = '') {
 
 sheet.addEventListener('click', (e) => {
   if (e.target.closest('.sheet-close')) return closeRouting();
-  if (e.target.closest('.sheet-head')) return setSheetCollapsed(!sheetCollapsed);
-  const option = e.target.closest('[data-option]');
-  if (option) selectItinerary(Number(option.dataset.option));
+  if (e.target.closest('.sheet-head')) setSheetCollapsed(!sheetCollapsed);
 });
 
 function setSheetCollapsed(collapsed) {
@@ -361,19 +388,22 @@ new ResizeObserver(() => {
   document.documentElement.style.setProperty('--sheet-height', `${sheet.hidden ? 0 : sheet.offsetHeight}px`);
 }).observe(sheet);
 
-function selectItinerary(index) {
+// The other options are on the map (drawRoutes); the sheet shows the chosen one.
+function selectItinerary(index, { fit = true } = {}) {
   selected = index;
-  showSheet(`<ol class="options">${itineraries.map(optionHtml).join('')}</ol>`, optionSummary(itineraries[index]));
-  sheet.querySelector('.option.selected')?.scrollIntoView({ block: 'nearest' });
-  drawItinerary(itineraries[index]);
+  const others = itineraries.length - 1;
+  const hint = others
+    ? `<span class="route-hint">${others === 1 ? '1 other route' : `${others} other routes`} in grey on the map: tap one to switch</span>`
+    : '';
+  showSheet(stepsHtml(itineraries[index]) + laterHtml(itineraries[index]), optionSummary(itineraries[index]) + hint);
+  drawRoutes({ fit });
 }
 
-function optionHtml(it, index) {
-  const isSelected = index === selected;
-  return `<li>
-    <button type="button" class="option${isSelected ? ' selected' : ''}" data-option="${index}">${optionSummary(it)}</button>
-    ${isSelected ? stepsHtml(it) : ''}
-  </li>`;
+function laterHtml(it) {
+  const later = allItineraries.filter((other) => other !== it && routeKey(other) === routeKey(it));
+  return later.length
+    ? `<p class="muted">Same route later: ${later.map((other) => `${formatTime(other.startTime)} → ${formatTime(other.endTime)}`).join(', ')}</p>`
+    : '';
 }
 
 function optionSummary(it) {
@@ -453,43 +483,114 @@ function legKind(leg) {
 
 // Map drawing ----------------------------------------------------------------
 
-function drawItinerary(it, { fit = true } = {}) {
+// Like Google Maps: the chosen route in its colours on top, the other options in grey
+// underneath, each with a label (travel time); tapping a grey route or its label picks it.
+function drawRoutes({ fit = true } = {}) {
   routeLayer.clearLayers();
   fadeStations(true);
   const bounds = L.latLngBounds([]);
-  for (const leg of it.legs) {
-    const points = decodePolyline(leg.legGeometry.points, leg.legGeometry.precision);
-    if (!points.length) continue;
-    const kind = legKind(leg);
+  const paths = itineraries.map((it) => it.legs.map((leg) => ({
+    kind: legKind(leg),
+    points: decodePolyline(leg.legGeometry.points, leg.legGeometry.precision),
+  })));
+
+  paths.forEach((legs, index) => {
+    if (index === selected) return;
+    const pick = () => selectItinerary(index, { fit: false });
+    for (const { points } of legs.filter((leg) => leg.points.length)) {
+      L.polyline(points, { pane: 'routeAlt', interactive: false, color: '#fff', weight: 6, opacity: 0.8 }).addTo(routeLayer);
+      L.polyline(points, { pane: 'routeAlt', interactive: false, color: palette.alt.fill, weight: 4 }).addTo(routeLayer);
+      L.polyline(points, { pane: 'routeAlt', opacity: 0, weight: 20 }).on('click', pick).addTo(routeLayer); // easier to tap
+      bounds.extend(points);
+    }
+  });
+
+  for (const { kind, points } of paths[selected].filter((leg) => leg.points.length)) {
     const walk = kind === 'walk';
-    L.polyline(points, { pane: 'route', interactive: false, color: '#fff', weight: walk ? 7 : 10, opacity: 0.9 }).addTo(routeLayer);
+    L.polyline(points, { pane: 'route', interactive: false, color: '#fff', weight: walk ? 5 : 6, opacity: 0.9 }).addTo(routeLayer);
     L.polyline(points, {
       pane: 'route',
       interactive: false,
       color: palette[kind].fill,
-      weight: walk ? 4 : 6,
-      dashArray: walk ? '1 8' : null,
+      weight: walk ? 3 : 4,
+      dashArray: walk ? '1 6' : null,
     }).addTo(routeLayer);
     bounds.extend(points);
   }
+  const it = itineraries[selected];
   const first = it.legs[0].from;
   const last = it.legs[it.legs.length - 1].to;
-  L.circleMarker([first.lat, first.lon], { pane: 'route', interactive: false, radius: 7, color: '#212529', weight: 3, fillColor: '#fff', fillOpacity: 1 }).addTo(routeLayer);
-  L.circleMarker([last.lat, last.lon], { pane: 'route', interactive: false, radius: 7, color: '#fff', weight: 3, fillColor: '#212529', fillOpacity: 1 }).addTo(routeLayer);
+  L.circleMarker([first.lat, first.lon], { pane: 'route', interactive: false, radius: 5, color: '#212529', weight: 2, fillColor: '#fff', fillOpacity: 1 }).addTo(routeLayer);
+  L.circleMarker([last.lat, last.lon], { pane: 'route', interactive: false, radius: 5, color: '#fff', weight: 2, fillColor: '#212529', fillOpacity: 1 }).addTo(routeLayer);
+
   routeBounds = bounds;
+  const { paddingTopLeft, paddingBottomRight } = fitPadding();
+  const zoom = fit ? map.getBoundsZoom(bounds, false, paddingTopLeft.add(paddingBottomRight)) : map.getZoom();
+  labelPoints(paths, zoom).forEach((point, index) => {
+    // A zero-size icon: the label overflows it, centred by CSS, so no invisible box covers a neighbour.
+    const icon = L.divIcon({ className: `route-label${index === selected ? ' selected' : ''}`, html: `<span>${routeLabel(itineraries[index])}</span>`, iconSize: [0, 0] });
+    L.marker(point, { icon, title: `Route ${index + 1}`, zIndexOffset: index === selected ? 1000 : 0 })
+      .on('click', () => selectItinerary(index, { fit: false }))
+      .addTo(routeLayer);
+  });
   if (fit) fitRoute();
+}
+
+function routeLabel(it) {
+  const kinds = [...new Set(it.legs.map(legKind).filter((kind) => kind !== 'walk'))];
+  return `${(kinds.length ? kinds : ['walk']).map((kind) => LEG_ICONS[kind]).join('')} ${formatDuration(it.duration)}`;
+}
+
+// Where each route's label goes. Best is a point of the route's middle part far from the
+// other routes, where the routes split up; labels are placed chosen route first, each at its
+// best point that keeps clear of the labels already placed (in pixels at `zoom`).
+function labelPoints(paths, zoom) {
+  const points = [];
+  const placed = [];
+  // How clear of the placed labels a point is: 1 and more means no overlap.
+  const gap = (p) => Math.min(...placed.map((q) => Math.max(Math.abs(p.x - q.x) / 80, Math.abs(p.y - q.y) / 30)));
+  for (const index of [selected, ...paths.keys()].filter((i, n, all) => all.indexOf(i) === n)) {
+    const ranked = rankedLabelPoints(paths, index).map((latlng) => ({ latlng, px: map.project(latlng, zoom) }));
+    // Routes along the same streets may leave no clear point: then the least crowded one.
+    const best = ranked.find(({ px }) => gap(px) >= 1) || ranked.reduce((a, b) => (gap(b.px) > gap(a.px) ? b : a));
+    points[index] = best.latlng;
+    placed.push(best.px);
+  }
+  return points;
+}
+
+function rankedLabelPoints(paths, index) {
+  const own = paths[index].flatMap((leg) => leg.points);
+  const others = paths.flatMap((legs, i) => (i === index ? [] : legs.flatMap((leg) => leg.points)));
+  const middle = own.slice(Math.floor(own.length * 0.05), Math.ceil(own.length * 0.95));
+  const candidates = middle.length ? middle : own;
+  const step = Math.max(1, Math.floor(candidates.length / 60));
+  const scored = [];
+  for (let i = 0; i < candidates.length; i += step) {
+    const [lat, lon] = candidates[i];
+    let nearest = Infinity;
+    for (const [otherLat, otherLon] of others) {
+      nearest = Math.min(nearest, (lat - otherLat) ** 2 + ((lon - otherLon) * 0.7) ** 2); // 0.7 ≈ cos(Zagreb's latitude)
+    }
+    // Among equally clear points, prefer the middle of the route.
+    scored.push({ point: candidates[i], score: (others.length ? nearest : 0) - Math.abs(i / candidates.length - 0.5) * 1e-9 });
+  }
+  return scored.sort((a, b) => b.score - a.score).map(({ point }) => point);
 }
 
 // Route colours follow light/dark mode; repaint without moving the map.
 document.addEventListener('themechange', () => {
-  if (itineraries.length) drawItinerary(itineraries[selected], { fit: false });
+  if (itineraries.length) drawRoutes({ fit: false });
 });
 
-// Fit the route into the map area left visible by the From/To box and the sheet.
+// Fit the routes into the map area left visible by the From/To box and the sheet.
 function fitRoute() {
-  if (!routeBounds) return;
+  if (routeBounds) map.fitBounds(routeBounds, fitPadding());
+}
+
+function fitPadding() {
   const top = routeBox.hidden ? 0 : routeBox.offsetHeight + 10;
-  map.fitBounds(routeBounds, { paddingTopLeft: [20, top + 20], paddingBottomRight: [70, sheet.offsetHeight + 20] });
+  return { paddingTopLeft: L.point(20, top + 20), paddingBottomRight: L.point(70, sheet.offsetHeight + 20) };
 }
 
 // Station dots stay tappable but fade so the route stands out.

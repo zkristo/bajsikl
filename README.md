@@ -21,10 +21,12 @@ Light/dark mode starts from the device setting. Your choices and hidden station 
 
 ## Route planning
 
-Tap 🔍 and type a destination in **To** (or tap *Route here* on a stop, a Bajs station, or after a
-long-press on the map). **From** defaults to your location. You get walk + Bajs + tram/bus/train
-options sorted by arrival time; tap one to see it on the map with step-by-step directions.
-Swipe the results down to minimise them, up (or tap the header) to bring them back.
+Tap 🔍 and type a destination in **To**, tap *Route here* on a stop or Bajs station, or long-press
+the map: that plans a route to the spot (or to the station under your finger) straight away.
+**From** defaults to your location. Walk + Bajs + tram/bus/train options are drawn on the map like
+on Google Maps: the chosen one in colour, the others in grey, each with its travel time; tap a grey
+route or its label to switch. The panel at the bottom shows the chosen route; swipe it up (or tap it)
+for step-by-step directions and later departures of the same route, down to minimise it again.
 
 Routes come from the free [Transitous](https://transitous.org) API (non-commercial use only,
 see its [usage policy](https://transitous.org/api/)). Only Bajs is allowed as a rental system.

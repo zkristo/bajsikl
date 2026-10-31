@@ -10,6 +10,7 @@
   --bajs: #1971c2;
   --bajs-ink: #fff;
   --walk: #868e96;
+  --alt: #98a1aa; /* route options other than the chosen one */
   --bg: #fff;
   --bg-soft: #f1f3f5;
   --text: #212529;
@@ -43,6 +44,7 @@
   --bajs: #4dabf7;
   --bajs-ink: #0b2545;
   --walk: #adb5bd;
+  --alt: #6f7882;
   --bg: #1f2328;
   --bg-soft: #2d3239;
   --text: #e9ecef;
@@ -472,13 +474,12 @@ body {
   transition: transform 0.2s;
 }
 
-/* Minimised: only the header with the chosen option's summary. */
+/* Minimised: only the header with the chosen route's summary. */
 #sheet.collapsed {
   overflow: hidden;
 }
 
-#sheet.collapsed .sheet-body,
-#sheet:not(.collapsed) .sheet-summary {
+#sheet.collapsed .sheet-body {
   display: none;
 }
 
@@ -527,32 +528,36 @@ body {
   cursor: pointer;
 }
 
-.options,
 .steps {
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.option {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 6px;
-  width: 100%;
-  margin-top: 8px;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+.route-hint {
+  grid-column: 1 / 3;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* Travel-time labels on the route options drawn on the map; the chosen one is filled. */
+.route-label span {
+  display: inline-block;
+  padding: 3px 7px;
+  border-radius: 12px;
   background: var(--bg);
-  color: inherit;
-  font: inherit;
-  text-align: left;
+  box-shadow: 0 1px 4px var(--shadow);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  transform: translate(-50%, -50%); /* centred on its point; Leaflet positions the outer element */
   cursor: pointer;
 }
 
-.option.selected {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
+.route-label.selected span {
+  background: var(--accent);
+  color: var(--on-accent);
 }
 
 .option-times {
