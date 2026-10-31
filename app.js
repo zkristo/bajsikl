@@ -17,8 +17,8 @@ const ZOOM_BUSY_BUSES = 14;
 const ZOOM_TRAMS = 12;
 const BUSY_BUS_SHARE = 0.1; // the busiest tenth of bus stops, by departures
 const SAME_STOP_METERS = 400; // platforms with one name closer than this are one stop
-const MARKER_SIZES = [[16, 20], [14, 16], [0, 10]]; // [from zoom, px]
-const MIN_ICON_SIZE = 14; // smaller markers are plain shapes
+const MARKER_SIZES = [[16, 15], [14, 12], [0, 7]]; // [from zoom, px]
+const MIN_ICON_SIZE = 12; // smaller markers are plain shapes
 
 const OSM_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
 const OFM_ATTRIBUTION = `<a href="https://openfreemap.org">OpenFreeMap</a> &copy; <a href="https://www.openmaptiles.org/">OpenMapTiles</a> ${OSM_ATTRIBUTION}`;
@@ -174,7 +174,7 @@ async function createBasemap({ style, tiles, paint }) {
 
 function readPalette() {
   const css = getComputedStyle(document.documentElement);
-  for (const kind of ['tram', 'bus', 'train', 'bajs', 'walk']) {
+  for (const kind of ['tram', 'bus', 'train', 'bajs', 'walk', 'alt']) {
     palette[kind] = { fill: css.getPropertyValue(`--${kind}`).trim(), ink: css.getPropertyValue(`--${kind}-ink`).trim() };
   }
 }
@@ -388,7 +388,7 @@ const StationMarker = L.CircleMarker.extend({
       ctx.translate(x - 12 * scale, y - 12 * scale);
       ctx.scale(scale, scale);
       ctx.strokeStyle = palette[kind].ink;
-      ctx.lineWidth = 2.2;
+      ctx.lineWidth = Math.max(2.2, 1.2 / scale); // at least 1.2 px on screen in small markers
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       ctx.stroke(MARKER_ICONS[kind]);
