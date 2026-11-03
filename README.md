@@ -4,7 +4,7 @@
 
 Mobile web map of ZET tram/bus stops, HŽ train stations and Bajs bike stations in Zagreb.
 Tap a stop to see where its trams, buses or trains go and the nearest Bajs stations (and the other
-way round).
+way round). A Bajs station shows how many bikes it has right now (live from the Bajs feed).
 
 Markers: grey rounded squares with a tram or bus icon, red for trains, blue circles with a bicycle
 for Bajs. Zoomed out, each stop has one marker for all its platforms (its popup lists every
@@ -30,7 +30,12 @@ for step-by-step directions and later departures of the same route, down to mini
 
 Routes come from the free [Transitous](https://transitous.org) API (non-commercial use only,
 see its [usage policy](https://transitous.org/api/)). Only Bajs is allowed as a rental system.
-Transitous uses live Bajs availability and ZET delays; the station layer on the map is static.
+Transitous uses live ZET delays and Bajs availability, but its Bajs routing often skips the
+nearest stations (it has sent people 7 minutes past two full ones). So the app also plans the Bajs
+option itself: walk to the nearest station with a bike right now (live counts from the
+[Bajs GBFS feed](https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_hd/en/station_status.json)), ride to
+the station nearest the destination, walk the rest, with Transitous routing each part. Transitous's
+own Bajs options that aren't quicker are left out, and so is the Bajs option when walking is as quick.
 
 ## Run
 
@@ -69,5 +74,5 @@ and the tiles folder holds OpenFreeMap's vector tiles, fonts and icons for the Z
 Downloads are cached in `build/cache/`; delete it to fetch fresh map data.
 
 Publish `index.html` as the page with every `tiles/<name>.txt` beside it at the same path. In the
-artifact, route planning and "my location" don't work (no outside servers, no location access), and
-the "Detailed" map style stays blank.
+artifact, route planning, live bike counts and "my location" don't work (no outside servers, no
+location access), and the "Detailed" map style stays blank.

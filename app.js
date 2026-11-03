@@ -1,10 +1,13 @@
-// Map of ZET/HŽ stops and Bajs bike stations. Station data is static, built by tools/build_data.py.
+// Map of ZET/HŽ stops and Bajs bike stations. Station data is static, built by tools/build_data.py;
+// bike counts are live from the Bajs (nextbike) feed.
 
 const ZAGREB_CENTER = [45.8131, 15.9772];
 const NEARBY_BAJS = 3;
 const NEARBY_STOPS = 4;
 const NEAR_METERS = 250;
 const MID_METERS = 500;
+const BAJS_STATUS_URL = 'https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_hd/en/station_status.json';
+const BAJS_STATUS_MAX_AGE = 60000; // the feed refreshes every minute
 
 // Station colours are --tram, --bus, --train and --bajs in style.css, so they follow light/dark mode.
 const ME_COLOR = '#f76707';
@@ -87,6 +90,8 @@ const ICONS = {
 
 let stops = [];
 let bajsStations = [];
+let bajsStatus = null; // {loaded, stations: Map of station id -> live status}
+let bajsStatusRequest = null;
 let places = []; // stops + Bajs stations, indexed by place.id for the clickable lists
 const palette = {}; // {kind: {fill, ink}} from the CSS colours of the current mode
 
@@ -419,6 +424,7 @@ function bajsPopup(station) {
   return `<div class="popup">
     <h3>${esc(station.name)}</h3>
     <div class="sub">Bajs station ${esc(station.number)} · ${station.capacity ?? '?'} docks</div>
+    <div class="live-bikes" data-station="${esc(station.stationId)}">${esc(bikesText(bajsStatus?.stations.get(station.stationId)) || 'Checking bikes…')}</div>
     <h4>Nearest stops</h4>
     ${placeList(nearestStops(station.latlng))}
     ${appLink}
@@ -489,9 +495,17 @@ function legend(kind, label) {
 }
 
 // Tapping a place in a popup list jumps to that place and opens its popup.
+// A Bajs station's popup gets its live bike count.
 map.on('popupopen', (e) => {
-  for (const button of e.popup.getElement().querySelectorAll('[data-place]')) {
+  const element = e.popup.getElement();
+  for (const button of element.querySelectorAll('[data-place]')) {
     button.addEventListener('click', () => showPlace(places[button.dataset.place]));
+  }
+  const live = element.querySelector('.live-bikes');
+  if (live) {
+    liveBajsStatus()
+      .then((stations) => { live.textContent = bikesText(stations.get(live.dataset.station)) || 'No live bike count'; })
+      .catch(() => live.remove());
   }
 });
 
@@ -516,6 +530,31 @@ map.on('locationfound', (e) => {
 });
 
 map.on('locationerror', (e) => alert(`Location unavailable: ${e.message}`));
+
+// Live Bajs bikes -------------------------------------------------------------
+
+// Station id -> GBFS station status; reloaded when older than a minute.
+function liveBajsStatus() {
+  if (bajsStatus && Date.now() - bajsStatus.loaded < BAJS_STATUS_MAX_AGE) return Promise.resolve(bajsStatus.stations);
+  bajsStatusRequest ??= fetch(BAJS_STATUS_URL)
+    .then((response) => {
+      if (!response.ok) throw new Error(`Bajs status: HTTP ${response.status}`);
+      return response.json();
+    })
+    .then((data) => {
+      bajsStatus = { loaded: Date.now(), stations: new Map(data.data.stations.map((s) => [s.station_id, s])) };
+      return bajsStatus.stations;
+    })
+    .finally(() => { bajsStatusRequest = null; });
+  return bajsStatusRequest;
+}
+
+function bikesText(status) {
+  if (!status) return '';
+  if (!status.is_renting) return 'Not renting right now';
+  const bikes = status.num_bikes_available;
+  return `${bikes} ${bikes === 1 ? 'bike' : 'bikes'} available now`;
+}
 
 // Helpers --------------------------------------------------------------------
 

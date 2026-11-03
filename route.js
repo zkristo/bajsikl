@@ -4,6 +4,7 @@
 const TRANSITOUS = 'https://api.transitous.org';
 const BAJS_PROVIDER = 'hr-bajs';
 const MAX_DIRECT_SECONDS = 3600; // the 30 min default hides most "Bajs all the way" trips
+const BAJS_MAX_WALK_METERS = 1000; // straight line to the first and from the last Bajs station
 
 const LEG_ICONS = { walk: '🚶', bajs: '🚲', tram: '🚋', bus: '🚌', train: '🚆' };
 const LEG_LABELS = { tram: 'Tram', bus: 'Bus', train: 'Train' };
@@ -266,9 +267,12 @@ async function planRoute() {
       directRentalProviders: BAJS_PROVIDER,
       maxDirectTime: MAX_DIRECT_SECONDS,
     });
-    const data = await fetchJson(`${TRANSITOUS}/api/v6/plan?${params}`);
+    const [data, bajs] = await Promise.all([
+      fetchJson(`${TRANSITOUS}/api/v6/plan?${params}`),
+      bajsItinerary(from, state.to).catch(() => null),
+    ]);
     if (id !== planCounter) return;
-    allItineraries = uniqueByArrival([...(data.direct || []), ...(data.itineraries || [])]);
+    allItineraries = uniqueByArrival(withOwnBajs([...(data.direct || []), ...(data.itineraries || [])], bajs));
     itineraries = allItineraries.filter((it, i) => allItineraries.findIndex((other) => routeKey(other) === routeKey(it)) === i);
     if (!itineraries.length) {
       return showSheet('<p>No routes found. If the start or destination is off the street network (e.g. in a lake), pick a point on a street.</p>');
@@ -278,6 +282,75 @@ async function planRoute() {
   } catch (err) {
     if (id === planCounter) showSheet(`<p>${esc(err.message)}</p>`);
   }
+}
+
+// Transitous's Bajs routing often skips the nearest stations (it walked 7 min past two
+// full ones), so the app plans "walk, Bajs, walk" itself too: from the nearest station
+// with a bike right now (live counts) to the station nearest the destination, each part
+// routed by Transitous. Null when there is no such pair within walking distance.
+async function bajsItinerary(from, to) {
+  const live = await liveBajsStatus();
+  const start = nearestBajs(from, (status) => status.is_renting && status.num_bikes_available > 0, live);
+  const end = nearestBajs(to, (status) => status.is_returning, live);
+  if (!start || !end || start === end) return null;
+  const [walkTo, ride, walkFrom] = await Promise.all([
+    directLegs(from, start, 'WALK'),
+    directLegs(start, end, 'BIKE'),
+    directLegs(end, to, 'WALK'),
+  ]);
+  if (!walkTo.length || !ride.length || !walkFrom.length) return null;
+  const rental = { fromStationName: start.name, toStationName: end.name, rentalUriWeb: start.url };
+  const legs = [
+    ...walkTo.map((leg) => ({ ...leg, to: { ...leg.to, name: start.name } })),
+    ...ride.map((leg) => ({ ...leg, mode: 'RENTAL', rental, from: { ...leg.from, name: start.name }, to: { ...leg.to, name: end.name } })),
+    ...walkFrom.map((leg) => ({ ...leg, from: { ...leg.from, name: end.name } })),
+  ];
+  const startTime = Date.now();
+  let time = startTime;
+  for (const leg of legs) {
+    leg.startTime = new Date(time).toISOString();
+    time += leg.duration * 1000;
+    leg.endTime = new Date(time).toISOString();
+  }
+  return { legs, startTime: legs[0].startTime, endTime: legs.at(-1).endTime, duration: (time - startTime) / 1000, transfers: 0 };
+}
+
+function nearestBajs(point, usable, live) {
+  const latlng = L.latLng(point.lat, point.lon);
+  let best = null;
+  let bestMeters = BAJS_MAX_WALK_METERS;
+  for (const station of bajsStations) {
+    const status = live.get(station.stationId);
+    const meters = latlng.distanceTo(station.latlng);
+    if (status && usable(status) && meters < bestMeters) {
+      best = station;
+      bestMeters = meters;
+    }
+  }
+  return best;
+}
+
+// The legs of the direct trip from one point to another by one mode ([] if none).
+async function directLegs(from, to, mode) {
+  const params = new URLSearchParams({
+    fromPlace: `${from.lat},${from.lon}`,
+    toPlace: `${to.lat},${to.lon}`,
+    directModes: mode,
+    transitModes: '', // no public transport: only the direct trip
+    maxDirectTime: MAX_DIRECT_SECONDS,
+  });
+  const data = await fetchJson(`${TRANSITOUS}/api/v6/plan?${params}`);
+  return data.direct?.[0]?.legs || [];
+}
+
+// Adds our Bajs trip unless walking is as quick, and drops Transitous's Bajs trips
+// that are no quicker than ours (they only use worse stations).
+function withOwnBajs(found, bajs) {
+  if (!bajs) return found;
+  const walk = found.find((it) => it.legs.length === 1 && it.legs[0].mode === 'WALK');
+  if (walk && walk.duration <= bajs.duration) return found;
+  const usesBajs = (it) => it.legs.some((leg) => leg.mode === 'RENTAL');
+  return [bajs, ...found.filter((it) => !(usesBajs(it) && it.duration >= bajs.duration))];
 }
 
 // Transitous may return the same direct trip twice; sort the rest by arrival time.

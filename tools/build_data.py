@@ -145,6 +145,7 @@ def bajs_stations(path):
     data = json.loads(path.read_text(encoding="utf-8"))
     return [
         {
+            "stationId": s["station_id"],  # key into the live station_status feed
             "name": s["name"],
             "number": s.get("short_name", ""),
             "lat": round_coord(s["lat"]),
