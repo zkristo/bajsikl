@@ -101,7 +101,7 @@ const hiddenLayers = new Set(readSetting('hiddenLayers', []));
 
 const map = L.map('map', { zoomControl: false, maxZoom: 19 }).setView(ZAGREB_CENTER, 14);
 map.attributionControl.setPrefix(false);
-map.attributionControl.addAttribution('Data: ZET, HŽPP, Bajs | Routes: <a href="https://transitous.org/sources/">Transitous</a> | <a href="https://github.com/zkristo/bajsikl">bajsikl</a>');
+map.attributionControl.addAttribution('Data: ZET, HŽPP, Bajs | Routes: <a href="https://github.com/motis-project/motis">MOTIS</a> | <a href="https://github.com/zkristo/bajsikl">bajsikl</a>');
 
 // All stations share one canvas: stacked canvases would swallow each other's taps.
 // A larger tolerance makes the small markers easier to tap on a phone.

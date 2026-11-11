@@ -1,7 +1,7 @@
-// Route planning with Transitous (https://transitous.org): walk + Bajs + ZET/HŽ.
+// Route planning with our own MOTIS server (see server/): walk + Bajs + ZET/HŽ.
 // Loaded after app.js and uses its map, palette and helpers (esc, formatDistance).
 
-const TRANSITOUS = 'https://api.transitous.org';
+const MOTIS = 'https://bajsikl.duckdns.org';
 const BAJS_PROVIDER = 'hr-bajs';
 const MAX_DIRECT_SECONDS = 3600; // the 30 min default hides most "Bajs all the way" trips
 const BAJS_MAX_WALK_METERS = 1000; // straight line to the first and from the last Bajs station
@@ -129,7 +129,7 @@ async function suggest(field, text) {
     numResults: 8,
   });
   try {
-    const results = await fetchJson(`${TRANSITOUS}/api/v1/geocode?${params}`);
+    const results = await fetchJson(`${MOTIS}/api/v1/geocode?${params}`);
     if (id !== suggestCounter) return;
     showSuggestions(field, results);
   } catch {
@@ -225,10 +225,10 @@ map.on('contextmenu', (e) => {
   nameDroppedPoint(state.to);
 });
 
-// Swap "Point on map" for the nearest address or place, when Transitous knows one.
+// Swap "Point on map" for the nearest address or place, when MOTIS knows one.
 async function nameDroppedPoint(point) {
   try {
-    const matches = await fetchJson(`${TRANSITOUS}/api/v1/reverse-geocode?place=${point.lat},${point.lon}`);
+    const matches = await fetchJson(`${MOTIS}/api/v1/reverse-geocode?place=${point.lat},${point.lon}`);
     const match = matches.find((m) => m.type === 'ADDRESS') || matches[0];
     if (!match?.name || state.to !== point) return;
     point.name = match.name;
@@ -268,7 +268,7 @@ async function planRoute() {
       maxDirectTime: MAX_DIRECT_SECONDS,
     });
     const [data, bajs] = await Promise.all([
-      fetchJson(`${TRANSITOUS}/api/v6/plan?${params}`),
+      fetchJson(`${MOTIS}/api/v6/plan?${params}`),
       bajsItinerary(from, state.to).catch(() => null),
     ]);
     if (id !== planCounter) return;
@@ -284,10 +284,10 @@ async function planRoute() {
   }
 }
 
-// Transitous's Bajs routing often skips the nearest stations (it walked 7 min past two
+// MOTIS's Bajs routing often skips the nearest stations (it walked 7 min past two
 // full ones), so the app plans "walk, Bajs, walk" itself too: from the nearest station
 // with a bike right now (live counts) to the station nearest the destination, each part
-// routed by Transitous. Null when there is no such pair within walking distance.
+// routed by MOTIS. Null when there is no such pair within walking distance.
 async function bajsItinerary(from, to) {
   const live = await liveBajsStatus();
   const start = nearestBajs(from, (status) => status.is_renting && status.num_bikes_available > 0, live);
@@ -339,11 +339,11 @@ async function directLegs(from, to, mode) {
     transitModes: '', // no public transport: only the direct trip
     maxDirectTime: MAX_DIRECT_SECONDS,
   });
-  const data = await fetchJson(`${TRANSITOUS}/api/v6/plan?${params}`);
+  const data = await fetchJson(`${MOTIS}/api/v6/plan?${params}`);
   return data.direct?.[0]?.legs || [];
 }
 
-// Adds our Bajs trip unless walking is as quick, and drops Transitous's Bajs trips
+// Adds our Bajs trip unless walking is as quick, and drops MOTIS's Bajs trips
 // that are no quicker than ours (they only use worse stations).
 function withOwnBajs(found, bajs) {
   if (!bajs) return found;
@@ -353,7 +353,7 @@ function withOwnBajs(found, bajs) {
   return [bajs, ...found.filter((it) => !(usesBajs(it) && it.duration >= bajs.duration))];
 }
 
-// Transitous may return the same direct trip twice; sort the rest by arrival time.
+// MOTIS may return the same direct trip twice; sort the rest by arrival time.
 function uniqueByArrival(list) {
   const seen = new Set();
   return list
@@ -539,7 +539,7 @@ function delayHtml(leg) {
   return ' <span class="on-time">on time</span>';
 }
 
-// Transitous names coordinate endpoints START and END.
+// MOTIS names coordinate endpoints START and END.
 function placeName(place) {
   if (place.name === 'START') return origin?.name || 'start';
   if (place.name === 'END') return state.to?.name || 'destination';
@@ -671,7 +671,7 @@ function fadeStations(fade) {
   map.getPane('stations').classList.toggle('faded', fade);
 }
 
-// Google encoded polyline; Transitous v6 uses precision 6.
+// Google encoded polyline; MOTIS v6 uses precision 6.
 function decodePolyline(encoded, precision) {
   const factor = 10 ** precision;
   const points = [];

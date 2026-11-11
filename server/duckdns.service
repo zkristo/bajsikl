@@ -1,0 +1,9 @@
+[Unit]
+Description=Point bajsikl.duckdns.org at this machine
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+ExecStart=/bin/sh -c 'curl -fsS "https://www.duckdns.org/update?domains=bajsikl&token=$(cat /home/ubuntu/.config/duckdns/token)&ip=" | grep -q OK'

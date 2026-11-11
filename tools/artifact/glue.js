@@ -28,9 +28,9 @@
       const text = document.getElementById(local[url]).textContent;
       return Promise.resolve(new Response(text, { headers: { 'content-type': 'application/json' } }));
     }
-    if (url.startsWith('https://api.transitous.org/') && !routeWarned) {
+    if (url.startsWith('https://bajsikl.duckdns.org/') && !routeWarned) {
       routeWarned = true;
-      window.alert('Route planning needs the Transitous server, which this artifact can\'t reach. Use zkristo.github.io/bajsikl for routes.');
+      window.alert('Route planning needs the route server, which this artifact can\'t reach. Use zkristo.github.io/bajsikl for routes.');
     }
     return realFetch(input, init);
   };
