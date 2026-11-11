@@ -1,0 +1,9 @@
+[Unit]
+Description=Keep bajsikl.duckdns.org pointed at this machine
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=10min
+
+[Install]
+WantedBy=timers.target

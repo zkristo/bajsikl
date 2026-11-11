@@ -119,6 +119,12 @@ body {
   margin-bottom: 8px;
 }
 
+.popup .live-bikes {
+  margin: -4px 0 8px;
+  font-weight: 600;
+  color: var(--bajs);
+}
+
 .popup h4 {
   margin: 10px 0 4px;
   font-size: 13px;

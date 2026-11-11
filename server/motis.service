@@ -1,0 +1,14 @@
+[Unit]
+Description=MOTIS journey planner (bajsikl)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/motis
+ExecStart=/home/ubuntu/motis/motis server
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

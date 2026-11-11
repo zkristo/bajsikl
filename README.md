@@ -4,7 +4,7 @@
 
 Mobile web map of ZET tram/bus stops, HŽ train stations and Bajs bike stations in Zagreb.
 Tap a stop to see where its trams, buses or trains go and the nearest Bajs stations (and the other
-way round).
+way round). A Bajs station shows how many bikes it has right now (live from the Bajs feed).
 
 Markers: grey rounded squares with a tram or bus icon, red for trains, blue circles with a bicycle
 for Bajs. Zoomed out, each stop has one marker for all its platforms (its popup lists every
@@ -28,9 +28,15 @@ on Google Maps: the chosen one in colour, the others in grey, each with its trav
 route or its label to switch. The panel at the bottom shows the chosen route; swipe it up (or tap it)
 for step-by-step directions and later departures of the same route, down to minimise it again.
 
-Routes come from the free [Transitous](https://transitous.org) API (non-commercial use only,
-see its [usage policy](https://transitous.org/api/)). Only Bajs is allowed as a rental system.
-Transitous uses live Bajs availability and ZET delays; the station layer on the map is static.
+Routes come from our own [MOTIS](https://github.com/motis-project/motis) server at
+`bajsikl.duckdns.org` (set up in [`server/`](server/)), the same software Transitous runs. Only Bajs
+is allowed as a rental system.
+MOTIS uses live ZET delays and Bajs availability, but its Bajs routing often skips the
+nearest stations (it has sent people 7 minutes past two full ones). So the app also plans the Bajs
+option itself: walk to the nearest station with a bike right now (live counts from the
+[Bajs GBFS feed](https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_hd/en/station_status.json)), ride to
+the station nearest the destination, walk the rest, with MOTIS routing each part. MOTIS's
+own Bajs options that aren't quicker are left out, and so is the Bajs option when walking is as quick.
 
 ## Run
 
@@ -69,5 +75,21 @@ and the tiles folder holds OpenFreeMap's vector tiles, fonts and icons for the Z
 Downloads are cached in `build/cache/`; delete it to fetch fresh map data.
 
 Publish `index.html` as the page with every `tiles/<name>.txt` beside it at the same path. In the
-artifact, route planning and "my location" don't work (no outside servers, no location access), and
-the "Detailed" map style stays blank.
+artifact, route planning, live bike counts and "my location" don't work (no outside servers, no
+location access), and the "Detailed" map style stays blank.
+
+## Route server
+
+`server/` holds the setup of the MOTIS server on an Ubuntu VM (arm64, MOTIS v2.11.4 from its
+releases page unpacked into `~/motis`):
+
+- `config.yml`: Croatia street map (Geofabrik), ZET and HŽPP timetables, live ZET delays and the
+  Bajs feed (named `hr-bajs`, as on Transitous). MOTIS listens on `127.0.0.1:8080` only.
+- `Caddyfile`: HTTPS for `bajsikl.duckdns.org` in front of MOTIS (`/etc/caddy/Caddyfile`).
+- `update.sh`: downloads fresh timetables (the street map on the 1st of the month or with `--osm`),
+  imports into a new data folder and switches over only if the import and a test request succeed.
+- `motis.service`, `motis-update.{service,timer}` (nightly at 03:30), `duckdns.{service,timer}`
+  (keeps the name pointed at the VM; token in `~/.config/duckdns/token`): copy to
+  `/etc/systemd/system/` and enable. Copy `config.yml` and `update.sh` to `~/motis`.
+
+Ports 80 and 443 must be open both in the Oracle security list and in the VM's `iptables`.

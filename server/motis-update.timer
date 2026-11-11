@@ -1,0 +1,9 @@
+[Unit]
+Description=Nightly MOTIS timetable refresh (bajsikl)
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 Europe/Zagreb
+Persistent=true
+
+[Install]
+WantedBy=timers.target
