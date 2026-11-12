@@ -5,6 +5,8 @@ const MOTIS = 'https://bajsikl.duckdns.org';
 const BAJS_PROVIDER = 'hr-bajs';
 const MAX_DIRECT_SECONDS = 3600; // the 30 min default hides most "Bajs all the way" trips
 const BAJS_MAX_WALK_METERS = 1000; // straight line to the first and from the last Bajs station
+const BAJS_RIDES = `${MOTIS}/rides`; // cycle-friendly rides between Bajs stations
+const WALK_METERS_PER_SECOND = 1; // along a straight line, when comparing Bajs stations
 
 const LEG_ICONS = { walk: '🚶', bajs: '🚲', tram: '🚋', bus: '🚌', train: '🚆' };
 const LEG_LABELS = { tram: 'Tram', bus: 'Bus', train: 'Train' };
@@ -24,6 +26,7 @@ let suggestions = [];
 let suggestField = null;
 let routeBounds = null;
 let sheetCollapsed = false;
+let bajsRidesRequest = null;
 
 // Routes are drawn above the stations. The chosen one lets taps through to them; the
 // grey alternatives below it take taps on their lines (the pane itself lets taps through).
@@ -285,17 +288,21 @@ async function planRoute() {
 }
 
 // MOTIS's Bajs routing often skips the nearest stations (it walked 7 min past two
-// full ones), so the app plans "walk, Bajs, walk" itself too: from the nearest station
-// with a bike right now (live counts) to the station nearest the destination, each part
-// routed by MOTIS. Null when there is no such pair within walking distance.
+// full ones) and rides along the quickest streets, ignoring cycle tracks. So the app
+// plans "walk, Bajs, walk" itself too: live counts say which stations near the start
+// have a bike and which near the destination take one back, and the ride table (cycle-
+// friendly rides between all stations, see server/build_rides.py) says which pair gets
+// there first. MOTIS routes the walks. Null when no such pair is within walking distance.
 async function bajsItinerary(from, to) {
-  const live = await liveBajsStatus();
-  const start = nearestBajs(from, (status) => status.is_renting && status.num_bikes_available > 0, live);
-  const end = nearestBajs(to, (status) => status.is_returning, live);
-  if (!start || !end || start === end) return null;
+  const [live, rides] = await Promise.all([liveBajsStatus(), bajsRides()]);
+  const starts = nearbyBajs(from, (status) => status.is_renting && status.num_bikes_available > 0, live);
+  const ends = nearbyBajs(to, (status) => status.is_returning, live);
+  const pair = quickestBajsPair(starts, ends, rides) || nearestBajsPair(starts, ends);
+  if (!pair) return null;
+  const { start, end } = pair;
   const [walkTo, ride, walkFrom] = await Promise.all([
     directLegs(from, start, 'WALK'),
-    directLegs(start, end, 'BIKE'),
+    pair.inTable ? tableRide(start, end) : directLegs(start, end, 'BIKE'),
     directLegs(end, to, 'WALK'),
   ]);
   if (!walkTo.length || !ride.length || !walkFrom.length) return null;
@@ -312,22 +319,74 @@ async function bajsItinerary(from, to) {
     time += leg.duration * 1000;
     leg.endTime = new Date(time).toISOString();
   }
-  return { legs, startTime: legs[0].startTime, endTime: legs.at(-1).endTime, duration: (time - startTime) / 1000, transfers: 0 };
+  return { legs, startTime: legs[0].startTime, endTime: legs.at(-1).endTime, duration: (time - startTime) / 1000, transfers: 0, fromTable: pair.inTable };
 }
 
-function nearestBajs(point, usable, live) {
+// Usable Bajs stations within walking distance of a point, nearest first, as { station, meters }.
+function nearbyBajs(point, usable, live) {
   const latlng = L.latLng(point.lat, point.lon);
+  return bajsStations
+    .map((station) => ({ station, meters: latlng.distanceTo(station.latlng) }))
+    .filter(({ station, meters }) => {
+      const status = live.get(station.stationId);
+      return status && usable(status) && meters < BAJS_MAX_WALK_METERS;
+    })
+    .sort((a, b) => a.meters - b.meters);
+}
+
+// The start and end station with the shortest walk + ride + walk, by the ride table.
+function quickestBajsPair(starts, ends, rides) {
   let best = null;
-  let bestMeters = BAJS_MAX_WALK_METERS;
-  for (const station of bajsStations) {
-    const status = live.get(station.stationId);
-    const meters = latlng.distanceTo(station.latlng);
-    if (status && usable(status) && meters < bestMeters) {
-      best = station;
-      bestMeters = meters;
+  let bestSeconds = Infinity;
+  for (const start of starts) {
+    for (const end of ends) {
+      const ride = rides?.[start.station.stationId]?.[end.station.stationId];
+      if (!ride) continue;
+      const seconds = (start.meters + end.meters) / WALK_METERS_PER_SECOND + ride[0];
+      if (seconds < bestSeconds) {
+        best = { start: start.station, end: end.station, inTable: true };
+        bestSeconds = seconds;
+      }
     }
   }
   return best;
+}
+
+// Without the ride table: the nearest usable station at each end, the ride routed by MOTIS.
+function nearestBajsPair(starts, ends) {
+  const start = starts[0]?.station;
+  const end = ends[0]?.station;
+  return start && end && start !== end ? { start, end, inTable: false } : null;
+}
+
+// Ride table: from station id -> to station id -> [seconds, metres]. Null when unreachable.
+function bajsRides() {
+  bajsRidesRequest ??= fetch(`${BAJS_RIDES}/index.json`)
+    .then((response) => (response.ok ? response.json() : null))
+    .then((data) => data?.rides || null)
+    .catch(() => null)
+    .then((rides) => {
+      if (!rides) bajsRidesRequest = null; // try again with the next route
+      return rides;
+    });
+  return bajsRidesRequest;
+}
+
+// The table's ride between two stations as one leg, shaped like MOTIS's ([] if none).
+async function tableRide(start, end) {
+  try {
+    const ride = await fetchJson(`${BAJS_RIDES}/${start.stationId}/${end.stationId}.json`);
+    return [{
+      mode: 'BIKE',
+      from: { name: start.name, lat: start.lat, lon: start.lon },
+      to: { name: end.name, lat: end.lat, lon: end.lon },
+      duration: ride.seconds,
+      distance: ride.meters,
+      legGeometry: { points: ride.points, precision: ride.precision },
+    }];
+  } catch {
+    return directLegs(start, end, 'BIKE');
+  }
 }
 
 // The legs of the direct trip from one point to another by one mode ([] if none).
@@ -343,14 +402,18 @@ async function directLegs(from, to, mode) {
   return data.direct?.[0]?.legs || [];
 }
 
-// Adds our Bajs trip unless walking is as quick, and drops MOTIS's Bajs trips
-// that are no quicker than ours (they only use worse stations).
+// Adds our Bajs trip unless walking is as quick, and drops MOTIS's Bajs trips that it
+// replaces: those without public transport when ours rides the cycle-friendly way from
+// the table (MOTIS's look quicker only because they take the streets at 15 km/h), and
+// any that are no quicker than ours (they only use worse stations).
 function withOwnBajs(found, bajs) {
   if (!bajs) return found;
   const walk = found.find((it) => it.legs.length === 1 && it.legs[0].mode === 'WALK');
   if (walk && walk.duration <= bajs.duration) return found;
   const usesBajs = (it) => it.legs.some((leg) => leg.mode === 'RENTAL');
-  return [bajs, ...found.filter((it) => !(usesBajs(it) && it.duration >= bajs.duration))];
+  const usesTransit = (it) => it.legs.some((leg) => leg.mode !== 'RENTAL' && leg.mode !== 'WALK');
+  const replaced = (it) => usesBajs(it) && ((bajs.fromTable && !usesTransit(it)) || it.duration >= bajs.duration);
+  return [bajs, ...found.filter((it) => !replaced(it))];
 }
 
 // MOTIS may return the same direct trip twice; sort the rest by arrival time.

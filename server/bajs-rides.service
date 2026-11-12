@@ -1,0 +1,10 @@
+[Unit]
+Description=Rebuild the table of rides between Bajs stations (bajsikl)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Nice=10
+ExecStart=/home/ubuntu/motis/update_rides.sh

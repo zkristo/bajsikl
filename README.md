@@ -32,11 +32,16 @@ Routes come from our own [MOTIS](https://github.com/motis-project/motis) server 
 `bajsikl.duckdns.org` (set up in [`server/`](server/)), the same software Transitous runs. Only Bajs
 is allowed as a rental system.
 MOTIS uses live ZET delays and Bajs availability, but its Bajs routing often skips the
-nearest stations (it has sent people 7 minutes past two full ones). So the app also plans the Bajs
-option itself: walk to the nearest station with a bike right now (live counts from the
-[Bajs GBFS feed](https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_hd/en/station_status.json)), ride to
-the station nearest the destination, walk the rest, with MOTIS routing each part. MOTIS's
-own Bajs options that aren't quicker are left out, and so is the Bajs option when walking is as quick.
+nearest stations (it has sent people 7 minutes past two full ones) and rides along the quickest
+streets, ignoring cycle tracks and signed cycle routes. So the app also plans the Bajs option
+itself. Live counts from the
+[Bajs GBFS feed](https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_hd/en/station_status.json) say
+which stations near the start have a bike and which near the destination take one back. A table of
+cycle-friendly rides between all stations (made with [BRouter](https://brouter.de), which prefers
+cycle tracks, at about 13.5 km/h on the flat) says which pair gets there first and gives the ride's
+path. MOTIS routes the walks. MOTIS's own Bajs-only options are left out, and so is the Bajs option
+when walking is as quick. Options that combine Bajs with public transport still come from MOTIS,
+with its street-biased rides.
 
 ## Run
 
@@ -91,5 +96,11 @@ releases page unpacked into `~/motis`):
 - `motis.service`, `motis-update.{service,timer}` (nightly at 03:30), `duckdns.{service,timer}`
   (keeps the name pointed at the VM; token in `~/.config/duckdns/token`): copy to
   `/etc/systemd/system/` and enable. Copy `config.yml` and `update.sh` to `~/motis`.
+
+- `build_rides.py`: the table of rides between Bajs stations. It runs BRouter (unpacked into
+  `~/brouter`, with the `E15_N45.rd5` segment file in `~/brouter/segments4`) over every pair of
+  stations up to 10 km apart and writes `/var/www/bajsikl/rides`, which Caddy serves under
+  `/rides/`. `update_rides.sh` (copy both to `~/motis`) refreshes BRouter's map data first;
+  `bajs-rides.{service,timer}` run it weekly. BRouter only runs during the build.
 
 Ports 80 and 443 must be open both in the Oracle security list and in the VM's `iptables`.

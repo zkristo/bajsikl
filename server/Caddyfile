@@ -1,4 +1,15 @@
 bajsikl.duckdns.org {
 	encode gzip
-	reverse_proxy 127.0.0.1:8080
+
+	# Cycle-friendly rides between Bajs stations, written by build_rides.py.
+	handle /rides/* {
+		root * /var/www/bajsikl
+		header Access-Control-Allow-Origin *
+		header Cache-Control "public, max-age=3600"
+		file_server
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:8080
+	}
 }
