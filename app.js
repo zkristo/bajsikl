@@ -182,6 +182,7 @@ function readPalette() {
   for (const kind of ['tram', 'bus', 'train', 'bajs', 'walk', 'alt']) {
     palette[kind] = { fill: css.getPropertyValue(`--${kind}`).trim(), ink: css.getPropertyValue(`--${kind}-ink`).trim() };
   }
+  palette.pill = { fill: css.getPropertyValue('--bg').trim(), text: css.getPropertyValue('--text').trim(), shadow: css.getPropertyValue('--shadow').trim() };
 }
 
 function webglSupported() {
@@ -314,6 +315,9 @@ function init(stopItems, bajsItems) {
     if (!hiddenLayers.has(kind)) layers[kind].addTo(map);
   }
   keepDrawingOrder();
+  showBikeCounts();
+  liveBajsStatus().catch(() => {});
+  setInterval(() => liveBajsStatus().catch(() => {}), BAJS_STATUS_MAX_AGE / 2);
 }
 
 // GTFS has one stop per platform. Platforms with the same name and kind close together
@@ -352,7 +356,8 @@ let shownTier = '';
 function updateStationMarkers() {
   const zoom = map.getZoom();
   const size = MARKER_SIZES.find(([fromZoom]) => zoom >= fromZoom)[1];
-  const tier = [size, zoom >= ZOOM_ALL_STOPS, zoom >= ZOOM_BUSY_BUSES, zoom >= ZOOM_TRAMS].join();
+  const pills = zoom >= ZOOM_PILLS;
+  const tier = [size, pills, zoom >= ZOOM_ALL_STOPS, zoom >= ZOOM_BUSY_BUSES, zoom >= ZOOM_TRAMS].join();
   if (tier === shownTier) return;
   shownTier = tier;
   for (const place of places) {
@@ -360,6 +365,7 @@ function updateStationMarkers() {
     const shown = shownAt(place, zoom);
     if (shown && !group.hasLayer(place.marker)) group.addLayer(place.marker);
     else if (!shown && group.hasLayer(place.marker)) group.removeLayer(place.marker);
+    place.marker.options.pill = pills && place.kind === 'bajs';
     place.marker.setRadius(size / 2);
   }
   keepDrawingOrder();
@@ -370,9 +376,77 @@ function keepDrawingOrder() {
   for (const kind of ['tram', 'train', 'bajs']) layers[kind].eachLayer((marker) => marker.bringToFront());
 }
 
+// Bajs stations are pins like in the Bajs app: a blue circle pinched to a short point at the
+// station, with the live number of free bikes on a light disc inside. Grey without bikes.
+const PIN = { radius: 15, point: 7, ring: 3, font: '600 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' };
+const ZOOM_PILLS = 15; // from this zoom Bajs stations are pins
+const measureContext = document.createElement('canvas').getContext('2d');
+
+function bikesAt(station) {
+  return bajsStatus?.stations.get(station.stationId)?.num_bikes_available;
+}
+
+// The pin's circle radius (wider for 3-digit counts) and the distance from its point to the circle's centre, in px.
+function pinSize(bikes) {
+  measureContext.font = PIN.font;
+  const text = bikes === undefined ? 0 : measureContext.measureText(String(bikes)).width;
+  const radius = Math.max(PIN.radius, text / 2 + PIN.ring + 5);
+  return { radius, reach: radius + PIN.point };
+}
+
 // A station marker on the shared canvas: a rounded square for trams, buses and trains
-// and a circle for Bajs, with the vehicle's icon once it is big enough to read.
+// with the vehicle's icon once it is big enough to read, and the pill for Bajs.
 const StationMarker = L.CircleMarker.extend({
+  _pill() {
+    return this.options.pill === true;
+  },
+
+  _updateBounds() {
+    if (!this._pill()) return L.CircleMarker.prototype._updateBounds.call(this);
+    const { radius, reach } = pinSize(this.options.bikes ?? 99);
+    const pad = this._clickTolerance() + 4;
+    this._pxBounds = L.bounds(this._point.subtract([radius + pad, reach + radius + pad]), this._point.add([radius + pad, pad]));
+  },
+
+  _containsPoint(point) {
+    if (!this._pill()) return L.CircleMarker.prototype._containsPoint.call(this, point);
+    const { radius, reach } = pinSize(this.options.bikes);
+    const pad = this._clickTolerance();
+    return Math.abs(point.x - this._point.x) <= radius + pad && point.y >= this._point.y - reach - radius - pad && point.y <= this._point.y + pad;
+  },
+
+  _drawPill(ctx, x, y) {
+    const { bikes } = this.options;
+    const { radius, reach } = pinSize(bikes);
+    const cy = y - reach;
+    const side = (40 * Math.PI) / 180; // where the pinched sides leave the circle, from straight down
+    const joinX = radius * Math.sin(side);
+    const joinY = cy + radius * Math.cos(side);
+    const pinch = cy + radius + 0.5; // the sides curve in towards the middle above the point
+    const along = 5; // the sides leave the circle along its tangent, so it keeps its full size
+    const tx = along * Math.cos(side);
+    const ty = along * Math.sin(side);
+    const empty = !(bikes > 0);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.bezierCurveTo(x - 1, pinch, x - joinX + tx, joinY + ty, x - joinX, joinY);
+    ctx.arc(x, cy, radius, Math.PI / 2 + side, Math.PI * 2.5 - side);
+    ctx.bezierCurveTo(x + joinX - tx, joinY + ty, x + 1, pinch, x, y);
+    ctx.fillStyle = empty ? palette.walk.fill : palette.bajs.fill;
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(x, cy, radius - PIN.ring, 0, Math.PI * 2);
+    ctx.fillStyle = empty ? '#f1f3f5' : '#e7f0fd';
+    ctx.fill();
+    if (bikes !== undefined) {
+      ctx.font = PIN.font;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = empty ? '#868e96' : '#111';
+      ctx.fillText(String(bikes), x, cy + 0.5);
+    }
+  },
+
   _updatePath() {
     const renderer = this._renderer;
     if (!renderer._drawing || this._empty()) return;
@@ -382,14 +456,19 @@ const StationMarker = L.CircleMarker.extend({
     const { kind } = this.options;
     ctx.save();
     ctx.globalAlpha = 1;
+    if (this._pill()) {
+      this._drawPill(ctx, x, y);
+      ctx.restore();
+      return;
+    }
     ctx.fillStyle = palette[kind].fill;
     ctx.beginPath();
     if (kind === 'bajs') ctx.arc(x, y, r, 0, Math.PI * 2);
     else if (ctx.roundRect) ctx.roundRect(x - r, y - r, r * 2, r * 2, r * 0.55);
     else ctx.rect(x - r, y - r, r * 2, r * 2);
     ctx.fill();
-    if (r * 2 >= MIN_ICON_SIZE) {
-      const scale = (r * (kind === 'bajs' ? 1.35 : 1.45)) / 24;
+    if (r * 2 >= MIN_ICON_SIZE && kind !== 'bajs') {
+      const scale = (r * 1.45) / 24;
       ctx.translate(x - 12 * scale, y - 12 * scale);
       ctx.scale(scale, scale);
       ctx.strokeStyle = palette[kind].ink;
@@ -543,10 +622,20 @@ function liveBajsStatus() {
     })
     .then((data) => {
       bajsStatus = { loaded: Date.now(), stations: new Map(data.data.stations.map((s) => [s.station_id, s])) };
+      showBikeCounts();
       return bajsStatus.stations;
     })
     .finally(() => { bajsStatusRequest = null; });
   return bajsStatusRequest;
+}
+
+// Puts the live number of free bikes on every Bajs marker.
+function showBikeCounts() {
+  for (const station of bajsStations) {
+    if (!station.marker) continue;
+    station.marker.options.bikes = bikesAt(station);
+    station.marker.redraw();
+  }
 }
 
 function bikesText(status) {
