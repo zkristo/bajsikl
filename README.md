@@ -31,17 +31,17 @@ for step-by-step directions and later departures of the same route, down to mini
 Routes come from our own [MOTIS](https://github.com/motis-project/motis) server at
 `bajsikl.duckdns.org` (set up in [`server/`](server/)), the same software Transitous runs. Only Bajs
 is allowed as a rental system.
-MOTIS uses live ZET delays and Bajs availability, but its Bajs routing often skips the
+MOTIS uses live ZET delays and Bajs availability, but its Bajs routing sometimes skips the
 nearest stations (it has sent people 7 minutes past two full ones) and rides along the quickest
 streets, ignoring cycle tracks and signed cycle routes. So the app also plans the Bajs option
-itself. Live counts from the
-[Bajs GBFS feed](https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_hd/en/station_status.json) say
-which stations near the start have a bike and which near the destination take one back. A table of
-cycle-friendly rides between all stations (made with [BRouter](https://brouter.de), which prefers
-cycle tracks, at about 13.5 km/h on the flat) says which pair gets there first and gives the ride's
-path. MOTIS routes the walks. MOTIS's own Bajs-only options are left out, and so is the Bajs option
-when walking is as quick. Options that combine Bajs with public transport still come from MOTIS,
-with its street-biased rides.
+itself, always from the nearest station with a bike to the nearest one that takes it back, going by
+the live counts in the
+[Bajs GBFS feed](https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_hd/en/station_status.json). The ride
+comes from a table of cycle-friendly rides between all stations (made with
+[BRouter](https://brouter.de), which prefers cycle tracks, at about 13.5 km/h on the flat) and MOTIS
+routes the walks. MOTIS's own Bajs options that skip a closer station are dropped, and so are its
+Bajs-only options (ours rides the cycle-friendly way) and the Bajs option when walking is as quick.
+Options that combine Bajs with public transport still come from MOTIS, with its street-biased rides.
 
 ## Run
 

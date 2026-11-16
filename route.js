@@ -4,9 +4,9 @@
 const MOTIS = 'https://bajsikl.duckdns.org';
 const BAJS_PROVIDER = 'hr-bajs';
 const MAX_DIRECT_SECONDS = 3600; // the 30 min default hides most "Bajs all the way" trips
+const BAJS_SAME_STATION_METERS = 30; // a trip's station position this close to a station is that station
 const BAJS_MAX_WALK_METERS = 1000; // straight line to the first and from the last Bajs station
 const BAJS_RIDES = `${MOTIS}/rides`; // cycle-friendly rides between Bajs stations
-const WALK_METERS_PER_SECOND = 1; // along a straight line, when comparing Bajs stations
 
 const LEG_ICONS = { walk: '🚶', bajs: '🚲', tram: '🚋', bus: '🚌', train: '🚆' };
 const LEG_LABELS = { tram: 'Tram', bus: 'Bus', train: 'Train' };
@@ -270,12 +270,13 @@ async function planRoute() {
       directRentalProviders: BAJS_PROVIDER,
       maxDirectTime: MAX_DIRECT_SECONDS,
     });
-    const [data, bajs] = await Promise.all([
+    const [data, bajs, live] = await Promise.all([
       fetchJson(`${MOTIS}/api/v6/plan?${params}`),
       bajsItinerary(from, state.to).catch(() => null),
+      liveBajsStatus().catch(() => null),
     ]);
     if (id !== planCounter) return;
-    allItineraries = uniqueByArrival(withOwnBajs([...(data.direct || []), ...(data.itineraries || [])], bajs));
+    allItineraries = uniqueByArrival(withOwnBajs([...(data.direct || []), ...(data.itineraries || [])], bajs, from, live));
     itineraries = allItineraries.filter((it, i) => allItineraries.findIndex((other) => routeKey(other) === routeKey(it)) === i);
     if (!itineraries.length) {
       return showSheet('<p>No routes found. If the start or destination is off the street network (e.g. in a lake), pick a point on a street.</p>');
@@ -287,17 +288,17 @@ async function planRoute() {
   }
 }
 
-// MOTIS's Bajs routing often skips the nearest stations (it walked 7 min past two
-// full ones) and rides along the quickest streets, ignoring cycle tracks. So the app
-// plans "walk, Bajs, walk" itself too: live counts say which stations near the start
-// have a bike and which near the destination take one back, and the ride table (cycle-
-// friendly rides between all stations, see server/build_rides.py) says which pair gets
-// there first. MOTIS routes the walks. Null when no such pair is within walking distance.
+// MOTIS's Bajs routing sometimes skips the nearest stations (it walked 7 min past two
+// full ones). So the app plans "walk, Bajs, walk" itself too, always with the nearest
+// station that has a bike at the start and the nearest that takes one back at the end
+// (live counts decide which have). The ride comes from the ride table (cycle-friendly,
+// see server/build_rides.py) and the walks from MOTIS. Null when no such stations are
+// within walking distance.
 async function bajsItinerary(from, to) {
   const [live, rides] = await Promise.all([liveBajsStatus(), bajsRides()]);
   const starts = nearbyBajs(from, (status) => status.is_renting && status.num_bikes_available > 0, live);
   const ends = nearbyBajs(to, (status) => status.is_returning, live);
-  const pair = quickestBajsPair(starts, ends, rides) || nearestBajsPair(starts, ends);
+  const pair = nearestBajsPair(starts, ends, rides);
   if (!pair) return null;
   const { start, end } = pair;
   const [walkTo, ride, walkFrom] = await Promise.all([
@@ -334,29 +335,13 @@ function nearbyBajs(point, usable, live) {
     .sort((a, b) => a.meters - b.meters);
 }
 
-// The start and end station with the shortest walk + ride + walk, by the ride table.
-function quickestBajsPair(starts, ends, rides) {
-  let best = null;
-  let bestSeconds = Infinity;
-  for (const start of starts) {
-    for (const end of ends) {
-      const ride = rides?.[start.station.stationId]?.[end.station.stationId];
-      if (!ride) continue;
-      const seconds = (start.meters + end.meters) / WALK_METERS_PER_SECOND + ride[0];
-      if (seconds < bestSeconds) {
-        best = { start: start.station, end: end.station, inTable: true };
-        bestSeconds = seconds;
-      }
-    }
-  }
-  return best;
-}
-
-// Without the ride table: the nearest usable station at each end, the ride routed by MOTIS.
-function nearestBajsPair(starts, ends) {
+// The nearest usable station at each end. The ride is the table's when it has this pair,
+// otherwise MOTIS routes it.
+function nearestBajsPair(starts, ends, rides) {
   const start = starts[0]?.station;
   const end = ends[0]?.station;
-  return start && end && start !== end ? { start, end, inTable: false } : null;
+  if (!start || !end || start === end) return null;
+  return { start, end, inTable: Boolean(rides?.[start.stationId]?.[end.stationId]) };
 }
 
 // Ride table: from station id -> to station id -> [seconds, metres]. Null when unreachable.
@@ -403,17 +388,35 @@ async function directLegs(from, to, mode) {
 }
 
 // Adds our Bajs trip unless walking is as quick, and drops MOTIS's Bajs trips that it
-// replaces: those without public transport when ours rides the cycle-friendly way from
-// the table (MOTIS's look quicker only because they take the streets at 15 km/h), and
-// any that are no quicker than ours (they only use worse stations).
-function withOwnBajs(found, bajs) {
-  if (!bajs) return found;
-  const walk = found.find((it) => it.legs.length === 1 && it.legs[0].mode === 'WALK');
-  if (walk && walk.duration <= bajs.duration) return found;
+// replaces: those that skip a closer station than the one they use, those without public
+// transport when ours rides the cycle-friendly way from the table (MOTIS's look quicker
+// only because they take the streets at 15 km/h), and any that are no quicker than ours.
+function withOwnBajs(found, bajs, from, live) {
+  const usable = found.filter((it) => !skipsCloserBajs(it, from, live));
+  if (!bajs) return usable;
+  const walk = usable.find((it) => it.legs.length === 1 && it.legs[0].mode === 'WALK');
+  if (walk && walk.duration <= bajs.duration) return usable;
   const usesBajs = (it) => it.legs.some((leg) => leg.mode === 'RENTAL');
   const usesTransit = (it) => it.legs.some((leg) => leg.mode !== 'RENTAL' && leg.mode !== 'WALK');
   const replaced = (it) => usesBajs(it) && ((bajs.fromTable && !usesTransit(it)) || it.duration >= bajs.duration);
-  return [bajs, ...found.filter((it) => !replaced(it))];
+  return [bajs, ...usable.filter((it) => !replaced(it))];
+}
+
+// True when a trip picks up or drops off a bike at a station although a closer one has a
+// bike (pick-up) or a free dock (drop-off) for the walk it starts or ends with.
+function skipsCloserBajs(it, from, live) {
+  if (!live) return false; // no live counts: cannot tell
+  const sameStation = (place, station) => L.latLng(place.lat, place.lon).distanceTo(station.latlng) < BAJS_SAME_STATION_METERS;
+  return it.legs.some((leg, i) => {
+    if (leg.mode !== 'RENTAL') return false;
+    const before = it.legs[i - 1];
+    const after = it.legs[i + 1];
+    const walksFrom = i === 0 ? from : before.mode === 'WALK' ? before.from : null;
+    const walksTo = after?.mode === 'WALK' ? after.to : null;
+    const closerStart = walksFrom && nearbyBajs(walksFrom, (status) => status.is_renting && status.num_bikes_available > 0, live)[0];
+    const closerEnd = walksTo && nearbyBajs(walksTo, (status) => status.is_returning, live)[0];
+    return (closerStart && !sameStation(leg.from, closerStart.station)) || (closerEnd && !sameStation(leg.to, closerEnd.station));
+  });
 }
 
 // MOTIS may return the same direct trip twice; sort the rest by arrival time.
