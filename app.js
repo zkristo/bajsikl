@@ -311,6 +311,7 @@ function init(stopItems, bajsItems) {
   }
   updateStationMarkers();
   map.on('zoomend', updateStationMarkers);
+  map.on('moveend', showDepartures);
   for (const kind of ['bus', 'tram', 'train', 'bajs']) {
     if (!hiddenLayers.has(kind)) layers[kind].addTo(map);
   }
@@ -357,7 +358,7 @@ function updateStationMarkers() {
   const zoom = map.getZoom();
   const size = MARKER_SIZES.find(([fromZoom]) => zoom >= fromZoom)[1];
   const pills = zoom >= ZOOM_PILLS;
-  const tier = [size, pills, zoom >= ZOOM_ALL_STOPS, zoom >= ZOOM_BUSY_BUSES, zoom >= ZOOM_TRAMS].join();
+  const tier = [size, pills, zoom >= ZOOM_STOP_PILLS, zoom >= ZOOM_ALL_STOPS, zoom >= ZOOM_BUSY_BUSES, zoom >= ZOOM_TRAMS].join();
   if (tier === shownTier) return;
   shownTier = tier;
   for (const place of places) {
@@ -365,7 +366,7 @@ function updateStationMarkers() {
     const shown = shownAt(place, zoom);
     if (shown && !group.hasLayer(place.marker)) group.addLayer(place.marker);
     else if (!shown && group.hasLayer(place.marker)) group.removeLayer(place.marker);
-    place.marker.options.pill = pills && place.kind === 'bajs';
+    place.marker.options.pill = place.kind === 'bajs' ? pills : zoom >= ZOOM_STOP_PILLS && place.kind !== 'train';
     place.marker.setRadius(size / 2);
   }
   keepDrawingOrder();
@@ -386,6 +387,73 @@ function bikesAt(station) {
   return bajsStatus?.stations.get(station.stationId)?.num_bikes_available;
 }
 
+// Tram and bus stops show their next departure from ZOOM_STOP_PILLS: a pill with the line
+// and the minutes until it leaves (live from our MOTIS server), pinched to a point at the stop.
+const STOP_PILL = { height: 30, point: 7, ring: 3, corner: 9, padding: 9, gap: 5,
+  line: '600 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+  minutes: '400 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' };
+const DEPARTURES_MAX_AGE = 30000;
+const ZOOM_STOP_PILLS = 18; // closer in, the pills of a stop's platforms would overlap
+const STOP_SCHEMES = {
+  A: { tram: () => '#1c3f7a', bus: () => '#56606b' }, // dark ZET: navy trams, slate buses
+  C: { tram: (line) => TRAM_LINE_COLORS[line] || '#1c3f7a', bus: () => '#56606b' }, // a colour per tram line
+};
+const TRAM_LINE_COLORS = { 1: '#e03131', 2: '#f08c00', 3: '#2f9e44', 4: '#1971c2', 5: '#9c36b5', 6: '#c2255c', 7: '#0c8599',
+  8: '#5f3dc4', 9: '#e8590c', 11: '#2b8a3e', 12: '#364fc7', 13: '#a61e4d', 14: '#087f5b', 15: '#862e9c', 17: '#d9480f' };
+let stopScheme = 'A';
+
+function minutesText(minutes) {
+  return minutes <= 0 ? 'now' : `${minutes}'`;
+}
+
+// The pill's width and height in px (the point adds STOP_PILL.point below it).
+function stopPillSize(next) {
+  measureContext.font = STOP_PILL.line;
+  const line = measureContext.measureText(next.line).width;
+  measureContext.font = STOP_PILL.minutes;
+  const minutes = measureContext.measureText(minutesText(next.minutes)).width;
+  return { width: STOP_PILL.padding * 2 + line + STOP_PILL.gap + minutes, height: STOP_PILL.height };
+}
+
+let departuresTimer = null;
+
+// Puts the next departure on every tram and bus stop in view, once zoomed in far enough.
+async function showDepartures() {
+  clearTimeout(departuresTimer);
+  if (map.getZoom() < ZOOM_STOP_PILLS) return;
+  departuresTimer = setTimeout(showDepartures, DEPARTURES_MAX_AGE);
+  const bounds = map.getBounds().pad(0.2);
+  const inView = stops.filter((stop) => (stop.kind === 'tram' || stop.kind === 'bus') && bounds.contains(stop.latlng));
+  if (!inView.length || inView.length > 150) return;
+  const unmatched = inView.filter((stop) => stop.motisId === undefined);
+  if (unmatched.length) {
+    const sw = bounds.getSouthWest();
+    const ne = bounds.getNorthEast();
+    const found = await fetch(`${MOTIS}/api/v1/map/stops?min=${sw.lat},${sw.lng}&max=${ne.lat},${ne.lng}`).then((r) => r.json()).catch(() => []);
+    for (const stop of unmatched) {
+      const mode = stop.kind.toUpperCase();
+      const nearestStop = found
+        .filter((f) => f.modes?.includes(mode))
+        .map((f) => ({ f, meters: stop.latlng.distanceTo([f.lat, f.lon]) }))
+        .sort((a, b) => a.meters - b.meters)[0];
+      stop.motisId = nearestStop && nearestStop.meters < 30 ? nearestStop.f.stopId : null;
+    }
+  }
+  await Promise.all(inView.filter((stop) => stop.motisId).map(async (stop) => {
+    try {
+      const data = await fetch(`${MOTIS}/api/v1/stoptimes?stopId=${encodeURIComponent(stop.motisId)}&n=4`).then((r) => r.json());
+      const first = data.stopTimes.find((t) => t.mode === stop.kind.toUpperCase());
+      stop.marker.options.next = first && {
+        line: first.routeShortName,
+        minutes: Math.round((new Date(first.place.departure) - Date.now()) / 60000),
+      };
+    } catch {
+      stop.marker.options.next = null;
+    }
+    stop.marker.redraw();
+  }));
+}
+
 // The pin's circle radius (wider for 3-digit counts) and the distance from its point to the circle's centre, in px.
 function pinSize(bikes) {
   measureContext.font = PIN.font;
@@ -398,24 +466,72 @@ function pinSize(bikes) {
 // with the vehicle's icon once it is big enough to read, and the pill for Bajs.
 const StationMarker = L.CircleMarker.extend({
   _pill() {
-    return this.options.pill === true;
+    return this.options.pill === true && (this.options.kind === 'bajs' || Boolean(this.options.next));
+  },
+
+  // Half the width and the full height above the station point, in px.
+  _extent(bikes) {
+    if (this.options.kind !== 'bajs') {
+      const { width, height } = stopPillSize(this.options.next);
+      return { half: width / 2, top: height + STOP_PILL.point };
+    }
+    const { radius, reach } = pinSize(bikes);
+    return { half: radius, top: reach + radius };
   },
 
   _updateBounds() {
     if (!this._pill()) return L.CircleMarker.prototype._updateBounds.call(this);
-    const { radius, reach } = pinSize(this.options.bikes ?? 99);
+    const { half, top } = this._extent(this.options.bikes ?? 99);
     const pad = this._clickTolerance() + 4;
-    this._pxBounds = L.bounds(this._point.subtract([radius + pad, reach + radius + pad]), this._point.add([radius + pad, pad]));
+    this._pxBounds = L.bounds(this._point.subtract([half + pad, top + pad]), this._point.add([half + pad, pad]));
   },
 
   _containsPoint(point) {
     if (!this._pill()) return L.CircleMarker.prototype._containsPoint.call(this, point);
-    const { radius, reach } = pinSize(this.options.bikes);
+    const { half, top } = this._extent(this.options.bikes);
     const pad = this._clickTolerance();
-    return Math.abs(point.x - this._point.x) <= radius + pad && point.y >= this._point.y - reach - radius - pad && point.y <= this._point.y + pad;
+    return Math.abs(point.x - this._point.x) <= half + pad && point.y >= this._point.y - top - pad && point.y <= this._point.y + pad;
+  },
+
+  _drawStopPill(ctx, x, y) {
+    const { next, kind } = this.options;
+    const { width, height } = stopPillSize(next);
+    const left = x - width / 2;
+    const bottom = y - STOP_PILL.point;
+    const top = bottom - height;
+    const half = 7; // half the width of the point where it leaves the pill
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.bezierCurveTo(x - 1, bottom + 1, x - half + 3, bottom, x - half, bottom);
+    ctx.roundRect(left, top, width, height, STOP_PILL.corner);
+    ctx.fillStyle = STOP_SCHEMES[stopScheme][kind](next.line);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(x - half, bottom);
+    ctx.bezierCurveTo(x - half + 3, bottom, x - 1, bottom + 1, x, y);
+    ctx.bezierCurveTo(x + 1, bottom + 1, x + half - 3, bottom, x + half, bottom);
+    ctx.lineTo(x + half, bottom - 1);
+    ctx.lineTo(x - half, bottom - 1);
+    ctx.fill();
+    const ring = STOP_PILL.ring;
+    ctx.beginPath();
+    ctx.roundRect(left + ring, top + ring, width - ring * 2, height - ring * 2, STOP_PILL.corner - ring);
+    ctx.fillStyle = '#f4f6f8';
+    ctx.fill();
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    const cy = top + height / 2 + 0.5;
+    ctx.font = STOP_PILL.line;
+    ctx.fillStyle = '#111';
+    ctx.fillText(next.line, left + STOP_PILL.padding, cy);
+    const lineWidth = ctx.measureText(next.line).width;
+    ctx.font = STOP_PILL.minutes;
+    ctx.fillStyle = '#495057';
+    ctx.fillText(minutesText(next.minutes), left + STOP_PILL.padding + lineWidth + STOP_PILL.gap, cy);
   },
 
   _drawPill(ctx, x, y) {
+    if (this.options.kind !== 'bajs') return this._drawStopPill(ctx, x, y);
     const { bikes } = this.options;
     const { radius, reach } = pinSize(bikes);
     const cy = y - reach;
